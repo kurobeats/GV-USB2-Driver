@@ -14,6 +14,7 @@
 #define GVUSB2_SND_RATE		48000
 #define GVUSB2_SND_CHANNELS	2
 #define GVUSB2_SND_SAMPLE_BYTES	2	/* S16_LE */
+#define GVUSB2_SND_FRAME_BYTES	(GVUSB2_SND_CHANNELS * GVUSB2_SND_SAMPLE_BYTES)
 
 /* Largest period the driver accepts; unchanged from the original limits. */
 #define GVUSB2_SND_PERIOD_BYTES_MAX	(128 * 1024)
@@ -31,6 +32,15 @@ static inline unsigned int gvusb2_period_us(unsigned int bytes)
 
 	return (unsigned int)(((unsigned long long)bytes * 1000000ULL) /
 			      bytes_per_sec);
+}
+
+/* An isoc packet length rounded down to whole frames. hw_ptr/avail advance in
+ * frames while the DMA ring is consumed in bytes, so an endpoint length that
+ * is not a multiple of GVUSB2_SND_FRAME_BYTES would desync the two
+ * permanently; the packet tail is dropped instead. */
+static inline unsigned int gvusb2_packet_bytes(unsigned int bytes)
+{
+	return bytes & ~(unsigned int)(GVUSB2_SND_FRAME_BYTES - 1);
 }
 
 #endif /* GVUSB2_SND_HW_H */
