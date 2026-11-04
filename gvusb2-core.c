@@ -13,6 +13,7 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/usb.h>
+#include <linux/delay.h>
 
 #include "gvusb2.h"
 #include "gvusb2-regs.h"
@@ -102,6 +103,11 @@ int gvusb2_snd_reset_adc(struct gvusb2_dev *dev)
 	gvusb2_write_reg(dev, 0x0500, 0x00);
 	/* enable I2S interface */
 	gvusb2_write_reg(dev, 0x050c, 0x01);
+
+	/* The vendor driver settles for ~100 ms after flipping these GPIO/clock
+	 * registers; without it a stream opened straight after probe can come up
+	 * with the ADC still reclocking. */
+	msleep(100);
 
 	return 0;
 }

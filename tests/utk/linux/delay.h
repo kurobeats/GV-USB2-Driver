@@ -4,4 +4,7 @@
 
 #include "../utk.h"
 
+/* Probe paths now settle; the host harness must not actually sleep. */
+static inline void msleep(unsigned int ms) { (void)ms; }
+
 #endif
