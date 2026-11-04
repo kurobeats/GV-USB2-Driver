@@ -3,7 +3,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 CC=${CC:-cc}
-$CC -std=c11 -O2 -Wall -Wextra -Werror -o /tmp/test_assemble test_assemble.c
-/tmp/test_assemble
-$CC -std=c11 -O2 -Wall -Wextra -Werror -o /tmp/test_regplan test_regplan.c
-/tmp/test_regplan
+CFLAGS="-std=c11 -O2 -Wall -Wextra -Werror"
+
+for t in test_assemble test_regplan test_snd_hw; do
+	$CC $CFLAGS -o "/tmp/$t" "$t.c"
+	"/tmp/$t"
+done

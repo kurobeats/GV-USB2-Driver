@@ -17,6 +17,7 @@
 #include <sound/core.h>
 #include <sound/pcm.h>
 
+#include "gvusb2-snd-hw.h"
 #include "gvusb2.h"
 
 #define CARD_NAME "gvusb2"
@@ -71,9 +72,9 @@ static struct snd_pcm_hardware gvusb2_snd_hw = {
 	.rate_max = 48000,
 	.channels_min = 2,
 	.channels_max = 2,
-	.buffer_bytes_max = (128 * 1024),
-	.period_bytes_min = 0xc000,
-	.period_bytes_max = (128 * 1024),
+	.buffer_bytes_max = GVUSB2_SND_BUFFER_BYTES_MAX,
+	.period_bytes_min = GVUSB2_SND_PERIOD_BYTES_MIN,
+	.period_bytes_max = GVUSB2_SND_PERIOD_BYTES_MAX,
 	.periods_min = 1,
 	.periods_max = 32,
 };
