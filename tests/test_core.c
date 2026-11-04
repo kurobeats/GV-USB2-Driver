@@ -227,6 +227,36 @@ static void test_i2c_regmap_table(void)
 	}
 }
 
+/* BUG: gvusb2_i2c_busy_wait never incremented its attempt counter, so a
+ * never-ready bus hung the driver instead of timing out. */
+static void test_i2c_busy_wait_stuck(void)
+{
+	struct gvusb2_vid *dev;
+	int ret;
+
+	utk_reset();
+	dev = utk_vid();
+	utk_i2c_stuck = 1;
+
+	ret = gvusb2_i2c_read_reg(dev, 0x44, 0x1c, &(u8){ 0 });
+	assert(ret == -ETIMEDOUT);
+}
+
+/* BUG: the busy wait also ignored register read errors; a failed USB status
+ * read spun forever rather than reporting the I/O error. */
+static void test_i2c_busy_wait_read_error(void)
+{
+	struct gvusb2_vid *dev;
+	int ret;
+
+	utk_reset();
+	dev = utk_vid();
+	utk_fail_usb_read = 1;
+
+	ret = gvusb2_i2c_read_reg(dev, 0x44, 0x1c, &(u8){ 0 });
+	assert(ret == -EIO);
+}
+
 /* The adapter algorithm must serve a combined write-then-read transaction and
  * a two-byte write via the same regmap. */
 static void test_i2c_xfer_shapes(void)
@@ -340,6 +370,8 @@ int main(void)
 	test_set_reg_mask_rmw();
 	test_set_reg_mask_write_error();
 	test_i2c_regmap_table();
+	test_i2c_busy_wait_stuck();
+	test_i2c_busy_wait_read_error();
 	test_i2c_xfer_shapes();
 	test_i2c_xfer_unsupported();
 	test_i2c_register_config();
