@@ -43,12 +43,30 @@ static void test_period_bytes_for_one_second(void)
 	assert(gvusb2_period_us(bps) == 1000000);
 }
 
+/* The completion path credits hw_ptr in frames but consumes the DMA ring in
+ * bytes; a packet whose actual_length is not a multiple of the frame size
+ * would desync the two permanently. gvusb2_packet_bytes() truncates the tail
+ * instead, and is identity for every well-formed length. */
+static void test_packet_length_is_frame_aligned(void)
+{
+	const unsigned int frame = GVUSB2_SND_FRAME_BYTES;
+
+	assert(frame == 4);
+	assert(gvusb2_packet_bytes(0) == 0);
+	assert(gvusb2_packet_bytes(frame) == frame);
+	assert(gvusb2_packet_bytes(24) == 24);	/* 6 frames: typical 48 kHz microframe */
+	assert(gvusb2_packet_bytes(25) == 24);	/* stray byte truncated */
+	assert(gvusb2_packet_bytes(255) == 252);
+	assert(gvusb2_packet_bytes(256) == 256);	/* wMaxPacketSize */
+}
+
 int main(void)
 {
 	test_min_period_is_fine_enough();
 	test_regression_256ms_floor();
 	test_period_fits_buffer();
 	test_period_bytes_for_one_second();
+	test_packet_length_is_frame_aligned();
 	printf("test_snd_hw: all tests passed\n");
 	return 0;
 }

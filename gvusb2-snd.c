@@ -94,7 +94,12 @@ static void gvusb2_snd_process_pcm(
 {
 	unsigned long flags;
 	struct snd_pcm_runtime *runtime = dev->substream->runtime;
-	int frames = bytes_to_frames(runtime, len);
+	int frames;
+
+	/* hw_ptr advances in frames, dma_offset in bytes: an endpoint length
+	 * that is not frame-aligned would desync them permanently. */
+	len = gvusb2_packet_bytes(len);
+	frames = bytes_to_frames(runtime, len);
 
 	spin_lock_irqsave(&dev->lock, flags);
 	dev->hw_ptr += frames;
