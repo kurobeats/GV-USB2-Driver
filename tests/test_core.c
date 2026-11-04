@@ -360,6 +360,24 @@ static void test_i2c_register_config(void)
 		I2C_FUNC_SMBUS_BYTE_DATA) != 0);
 }
 
+/* BUG: i2c_register ignored the return of the clock-divider and
+ * alternate-i2c config writes, so a failed USB write left a registered but
+ * misconfigured adapter and still reported success. */
+static void test_i2c_register_write_failure(void)
+{
+	struct gvusb2_vid *dev;
+	int ret;
+
+	utk_reset();
+	dev = utk_vid();
+	utk_fail_usb_write = 1;
+
+	ret = gvusb2_i2c_register(dev);
+	assert(ret < 0);
+	assert(utk_add_count == 1);
+	assert(utk_del_count == 1); /* adapter must not stay registered */
+}
+
 int main(void)
 {
 	signal(SIGALRM, utk_on_alarm);
@@ -375,6 +393,7 @@ int main(void)
 	test_i2c_xfer_shapes();
 	test_i2c_xfer_unsupported();
 	test_i2c_register_config();
+	test_i2c_register_write_failure();
 
 	printf("test_core: all tests passed\n");
 	return 0;

@@ -180,12 +180,22 @@ int gvusb2_i2c_register(struct gvusb2_vid *dev)
 	client->addr = 0x44;
 
 	/* set i2c clock divider */
-	gvusb2_write_reg(&dev->gv, 0x0202, 0x08);
+	ret = gvusb2_write_reg(&dev->gv, 0x0202, 0x08);
+	if (ret < 0)
+		goto del_adapter;
 
 	/* disable alternate i2c */
-	gvusb2_write_reg(&dev->gv, 0x02ff, 0x00);
+	ret = gvusb2_write_reg(&dev->gv, 0x02ff, 0x00);
+	if (ret < 0)
+		goto del_adapter;
 
 	return 0;
+
+del_adapter:
+	/* undo i2c_add_adapter: probe would otherwise leak a misconfigured
+	 * adapter while the error is reported */
+	i2c_del_adapter(adap);
+	return ret;
 }
 
 int gvusb2_i2c_unregister(struct gvusb2_vid *dev)
