@@ -31,11 +31,11 @@ int gvusb2_read_reg(struct gvusb2_dev *dev, u16 reg, u8 *value)
 	ret = usb_control_msg(dev->udev, pipe, 0x00,
 		USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
 		0x00, reg, buf, sizeof(u8), HZ);
-	if (ret < 0) {
+	if (ret != sizeof(u8)) {
 		pr_err("gvusb2: read failed on reg 0x%04x (%d)\n",
 			reg, ret);
 		kfree(buf);
-		return ret;
+		return ret < 0 ? ret : -EIO;
 	}
 
 	*value = *buf;

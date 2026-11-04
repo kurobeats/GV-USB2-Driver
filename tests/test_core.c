@@ -38,6 +38,7 @@ static u8 utk_regs[UTK_NREGS];
 static u8 utk_chipmem[256];
 static int utk_fail_usb_read;
 static int utk_fail_usb_write;
+static int utk_usb_read_short;
 static int utk_i2c_stuck;
 static int utk_add_count;
 static int utk_del_count;
@@ -55,6 +56,7 @@ static void utk_reset(void)
 	memset(utk_chipmem, 0, sizeof(utk_chipmem));
 	utk_fail_usb_read = 0;
 	utk_fail_usb_write = 0;
+	utk_usb_read_short = 0;
 	utk_i2c_stuck = 0;
 	utk_add_count = 0;
 	utk_del_count = 0;
@@ -73,6 +75,8 @@ int usb_control_msg(struct usb_device *udev, unsigned int pipe, u8 request,
 			return -EIO;
 		if (index >= UTK_NREGS)
 			return -EIO;
+		if (utk_usb_read_short)
+			return 0; /* acknowledged but 0 bytes transferred */
 		if (size)
 			*(u8 *)data = utk_regs[index];
 		return size;
@@ -192,6 +196,25 @@ static void test_set_reg_mask_write_error(void)
 
 	ret = gvusb2_set_reg_mask(&dev, 0x0007, 0x30, 0x10);
 	assert(ret < 0);
+}
+
+/* BUG: gvusb2_read_reg only checked ret < 0, so an acknowledged read that
+ * transferred 0 bytes was treated as success and `*value` was filled from an
+ * uninitialized byte. */
+static void test_read_reg_short_transfer(void)
+{
+	struct gvusb2_dev dev;
+	u8 v;
+	int ret;
+
+	utk_reset();
+	dev.udev = NULL;
+	utk_usb_read_short = 1;
+
+	v = 0xaa;
+	ret = gvusb2_read_reg(&dev, 0x0500, &v);
+	assert(ret == -EIO);
+	assert(v == 0x00); /* no uninitialized byte may leak through */
 }
 
 /* I2C bus register map: address math (addr << 1, read-bit set for reads),
@@ -385,6 +408,7 @@ int main(void)
 
 	test_gpio_macros();
 	test_read_write_roundtrip();
+	test_read_reg_short_transfer();
 	test_set_reg_mask_rmw();
 	test_set_reg_mask_write_error();
 	test_i2c_regmap_table();
