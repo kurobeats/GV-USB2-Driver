@@ -1,0 +1,2 @@
+Lane-private fakes for tests/test_v4l2.c.
+Only the v4l2 lane writes here; keep it self-contained.

@@ -1,0 +1,2 @@
+Lane-private fakes for tests/test_snd.c.
+Only the snd lane writes here; keep it self-contained.

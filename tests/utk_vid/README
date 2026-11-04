@@ -1,0 +1,2 @@
+Lane-private fakes for tests/test_vid.c.
+Only the vid lane writes here; keep it self-contained.
