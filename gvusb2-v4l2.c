@@ -207,8 +207,15 @@ static int gvusb2_vb2_start_streaming(struct vb2_queue *vb2q,
 
 	/* submit urbs */
 	ret = gvusb2_vid_submit_urbs(dev);
-	if (ret < 0)
+	if (ret < 0) {
+		/* unwind: kill the URBs that did submit, restore the decoder and
+		 * the STK1150 to their stopped state, and drop the lock. */
+		gvusb2_vid_cancel_urbs(dev);
+		gvusb2_write_reg(&dev->gv, 0x0100, 0x33);
+		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 0);
+		mutex_unlock(&dev->v4l2_lock);
 		return ret;
+	}
 
 	/* stop mutex */
 	mutex_unlock(&dev->v4l2_lock);
