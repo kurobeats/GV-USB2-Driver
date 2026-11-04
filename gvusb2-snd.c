@@ -562,7 +562,9 @@ static void gvusb2_snd_disconnect(struct usb_interface *intf)
 	dev = usb_get_intfdata(intf);
 	usb_set_intfdata(intf, NULL);
 
-	/* free isoc urbs */
+	/* cancel submitted urbs first: their completion handlers carry
+	 * urb->context = dev and would UAF after free */
+	gvusb2_snd_cancel_isoc(dev);
 	gvusb2_snd_free_isoc(dev);
 
 	/* free the sound card */
