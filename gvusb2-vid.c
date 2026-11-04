@@ -501,7 +501,7 @@ int gvusb2_vid_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	gvusb2_stk1150_init(dev);
 
 	/* allocate URBs */
-	gvusb2_vid_allocate_urbs(dev);
+	ret = gvusb2_vid_allocate_urbs(dev);
 	if (ret < 0)
 		goto free_gvusb2;
 
