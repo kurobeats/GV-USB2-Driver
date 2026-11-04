@@ -324,7 +324,6 @@ int gvusb2_vb2_setup(struct gvusb2_vid *dev)
 
 static int gvusb2_s_ctrl(struct v4l2_ctrl *ctrl)
 {
-	u8 reg_06;
 	struct gvusb2_vid *dev = container_of(ctrl->handler,
 		struct gvusb2_vid, ctrl_handler);
 
@@ -355,12 +354,20 @@ static int gvusb2_s_ctrl(struct v4l2_ctrl *ctrl)
 		i2c_smbus_write_byte_data(&dev->i2c_client, 0x22,
 			ctrl->val);
 		break;
-	case V4L2_CID_AUTOGAIN:
+	case V4L2_CID_AUTOGAIN: {
+		int reg_06;
+
 		// read the previous value and only overwrite bit 4
 		reg_06 = i2c_smbus_read_byte_data(&dev->i2c_client, 0x06);
+		/* A failed read used to be truncated into the u8 that was then
+		 * written back, replacing the chip's mode register with
+		 * garbage. Leave the register alone and report the error. */
+		if (reg_06 < 0)
+			return reg_06;
 		i2c_smbus_write_byte_data(&dev->i2c_client, 0x06,
 			(reg_06 & 0xEF) | ((ctrl->val << 4) ^ 0x10));
 		break;
+	}
 	case GVUSB2_CID_VERTICAL_START:
 		gvusb2_write_reg(&dev->gv, 0x0112, ctrl->val);
 		gvusb2_write_reg(&dev->gv, 0x0113, 0);
