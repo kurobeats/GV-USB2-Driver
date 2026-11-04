@@ -1,6 +1,12 @@
 %global buildforkernels akmod
 %global debug_package %{nil}
 
+# Out-of-tree modules must not be built with LTO: the Fedora default
+# -flto=auto produces a .gnu.linkonce.this_module section whose size does not
+# match the running kernel's struct module, and modprobe then fails with
+# "section size must match the kernel's built struct module size at run time".
+%global _lto_cflags %{nil}
+
 %global prjname gvusb2
 
 Name:           %{prjname}-kmod
