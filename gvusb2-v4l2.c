@@ -467,6 +467,7 @@ static int gvusb2_vidioc_s_input(struct file *file, void *priv, unsigned int i)
 	struct gvusb2_vid *dev = video_drvdata(file);
 	u8 val;
 	s32 reg;
+	int ret;
 
 	switch (i) {
 	case GVUSB2_INPUT_COMPOSITE:
@@ -485,9 +486,10 @@ static int gvusb2_vidioc_s_input(struct file *file, void *priv, unsigned int i)
 	if (reg < 0)
 		return reg;
 
-	i2c_smbus_write_byte_data(&dev->i2c_client, 0x02, (reg & 0xc3) | val);
-	if (reg < 0)
-		return reg;
+	ret = i2c_smbus_write_byte_data(&dev->i2c_client, 0x02,
+					(reg & 0xc3) | val);
+	if (ret < 0)
+		return ret;
 
 	dev->input_num = i;
 
