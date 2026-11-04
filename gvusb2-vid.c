@@ -15,6 +15,7 @@
 #include <linux/usb.h>
 #include <media/v4l2-dev.h>
 
+#include "gvusb2-assemble.h"
 #include "gvusb2-vid.h"
 
 MODULE_DESCRIPTION("gvusb2 video driver");
@@ -54,47 +55,38 @@ struct gvusb2_vb *gvusb2_vid_next_buffer(struct gvusb2_vid *dev)
 static inline
 void gvusb2_vid_copy_video(struct gvusb2_vid *dev, u8 *buf, int len)
 {
-	int bytes_per_line, width;
+	u32 buffer_len;
+	u8 *buffer_addr;
+	int width;
 	struct gvusb2_vb *vb = dev->current_buf;
-	u32 buffer_len = vb->vb.vb2_buf.planes[0].length;
-	u8 *buffer_addr = vb2_plane_vaddr(&vb->vb.vb2_buf, 0);
+	struct gvusb2_pos pos = { vb->buf_pos, vb->line_pos };
+	int ret;
 
 	get_resolution(dev, &width, 0);
-	bytes_per_line = width * 2;
+	buffer_len = vb->vb.vb2_buf.planes[0].length;
+	buffer_addr = vb2_plane_vaddr(&vb->vb.vb2_buf, 0);
 
 	while (len > 0) {
-		int bytes_left_in_line = bytes_per_line - vb->line_pos;
-		int len_to_copy;
+		u32 offset, run;
 
-		if (len < bytes_left_in_line)
-			len_to_copy = len;
-		else
-			len_to_copy = bytes_left_in_line;
-
-		if (vb->buf_pos + len_to_copy > buffer_len) {
+		ret = gvusb2_next_run(&pos, len, width * 2, buffer_len,
+				      &offset, &run);
+		if (ret < 0) {
 			dev_warn_ratelimited(&dev->intf->dev,
 				"buffer overflow detected, truncating field.\n");
-
-			/* Pin to the end of the plane: keeps the buffer in a
-			 * well-defined state so the field still gets submitted
-			 * instead of being dropped (drops showed up as ~25fps
-			 * instead of 29.97).
-			 */
-			vb->buf_pos = buffer_len;
-			return;
+			break;
 		}
+		if (ret == 0)
+			break;
 
-		memcpy(buffer_addr + vb->buf_pos, buf, len_to_copy);
-		vb->buf_pos += len_to_copy;
-		vb->line_pos += len_to_copy;
-		len -= len_to_copy;
-		buf += len_to_copy;
-
-		if (vb->line_pos == bytes_per_line) {
-			vb->buf_pos += bytes_per_line;
-			vb->line_pos = 0;
-		}
+		memcpy(buffer_addr + offset, buf, run);
+		gvusb2_advance(&pos, run, width * 2);
+		buf += run;
+		len -= run;
 	}
+
+	vb->buf_pos = pos.buf_pos;
+	vb->line_pos = pos.line_pos;
 }
 
 static inline void gvusb2_vid_submit_video_buffer(struct gvusb2_vid *dev)

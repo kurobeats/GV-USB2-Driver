@@ -94,3 +94,11 @@ Disable Automatic Gain Control (AGC):
 Manual Gain Setting (only takes effect when AGC is disabled):
 
 ```sudo v4l2-ctl -c gain=X```
+
+## Tests
+
+Host-side unit tests for the frame assembly logic (no hardware or kernel
+headers needed):
+
+    tests/run-tests.sh
+
