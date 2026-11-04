@@ -79,6 +79,15 @@ static inline unsigned int gvusb2_payload(const struct gvusb2_pos *p,
 	return p->written < buffer_len ? p->written : buffer_len;
 }
 
+/* After a dropped ISO packet the byte stream is misaligned: the rest of the
+ * field would land on stale offsets and overrun the plane. Restart the field
+ * from a clean position instead (payload keeps its high-water mark). */
+static inline void gvusb2_resync(struct gvusb2_pos *p)
+{
+	p->buf_pos = 0;
+	p->line_pos = 0;
+}
+
 /* Plane bytes a field of `lines` source lines occupies. */
 static inline unsigned int gvusb2_field_bytes(unsigned int lines, unsigned int bytes_per_line)
 {

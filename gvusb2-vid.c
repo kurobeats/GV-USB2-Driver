@@ -154,10 +154,25 @@ void gvusb2_vid_process_data(struct gvusb2_vid *dev, u8 *buf, int len)
 		gvusb2_vid_process_status_packet(dev, buf[0]);
 	} else {
 		/* Data packet */
-		if (dev->counter != buf[1])
+		if (dev->counter != buf[1]) {
 			gvusb2_dbg(&dev->intf->dev,
 				"counter desync. expected %d got %d\n",
 				dev->counter, buf[1]);
+
+			/* A dropped packet leaves this field misaligned; restart
+			 * it so the rest cannot overrun the plane. */
+			if (dev->current_buf != NULL) {
+				struct gvusb2_pos pos = {
+					dev->current_buf->buf_pos,
+					dev->current_buf->line_pos,
+					dev->current_buf->written,
+				};
+
+				gvusb2_resync(&pos);
+				dev->current_buf->buf_pos = pos.buf_pos;
+				dev->current_buf->line_pos = pos.line_pos;
+			}
+		}
 
 		dev->counter = (buf[1] + 1) % 64;
 

@@ -143,6 +143,26 @@ static void test_payload_truncated(void)
 	assert(gvusb2_payload(&p, PLANE) < PLANE);
 }
 
+/* A counter desync means the field is misaligned: restarting it must keep the
+ * following data inside the plane instead of overrunning it. */
+static void test_resync_prevents_overflow(void)
+{
+	static unsigned char plane[PLANE + GUARD];
+	struct gvusb2_pos p = { 0, 0, 0 };
+
+	memset(plane, 0, sizeof(plane));
+
+	/* Part of a field arrives, then a packet is dropped... */
+	assert(feed_field(&p, 200 * BPL, 16384, plane, PLANE) == 0);
+	/* ...so the driver restarts the field. */
+	gvusb2_resync(&p);
+	assert(p.buf_pos == 0 && p.line_pos == 0);
+
+	/* The rewritten field fits, with no overflow. */
+	assert(feed_field(&p, LINES_PER_FIELD * BPL, 16384, plane, PLANE) == 0);
+	assert(gvusb2_payload(&p, PLANE) <= PLANE);
+}
+
 /* Chunking must not change the outcome: URB boundaries vary in the wild. */
 static void test_chunking_independent(void)
 {
@@ -169,6 +189,7 @@ int main(void)
 	test_overflow_pins_position();
 	test_payload_full_frame();
 	test_payload_truncated();
+	test_resync_prevents_overflow();
 	test_chunking_independent();
 	printf("test_assemble: all tests passed\n");
 	return 0;
