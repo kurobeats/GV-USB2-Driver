@@ -26,11 +26,11 @@ MODULE_DESCRIPTION("gvusb2 sound driver");
 MODULE_AUTHOR("Isaac Lozano <109lozanoi@gmail.com>");
 MODULE_LICENSE("Dual BSD/GPL");
 
-int index;
+static int snd_index;
 char *id;
 bool enable;
 
-module_param(index, int, 0444);
+module_param_named(index, snd_index, int, 0444);
 MODULE_PARM_DESC(index, "Index value for " CARD_NAME " soundcard.");
 module_param(id, charp, 0444);
 MODULE_PARM_DESC(id, "ID string for " CARD_NAME " soundcard.");
@@ -87,7 +87,7 @@ static void gvusb2_snd_cancel_isoc(struct gvusb2_snd *dev);
  *  Alsa Stuff
  ****************************************************************************/
 
-void gvusb2_snd_process_pcm(
+static void gvusb2_snd_process_pcm(
 	struct gvusb2_snd *dev,
 	unsigned char *buf,
 	unsigned int len)
@@ -257,14 +257,14 @@ static const struct snd_pcm_ops gvusb2_snd_capture_ops = {
 	.page      = gvusb2_snd_pcm_page,
 };
 
-int gvusb2_snd_alsa_init(struct gvusb2_snd *dev)
+static int gvusb2_snd_alsa_init(struct gvusb2_snd *dev)
 {
 	int ret;
 
 	spin_lock_init(&dev->lock);
 	dev->hw_ptr = dev->dma_offset = dev->avail = 0;
 
-	ret = snd_card_new(&dev->intf->dev, index, id, THIS_MODULE, 0,
+	ret = snd_card_new(&dev->intf->dev, snd_index, id, THIS_MODULE, 0,
 			&dev->card);
 	if (ret < 0)
 		return ret;
@@ -324,7 +324,7 @@ void gvusb2_snd_cancel_isoc(struct gvusb2_snd *dev)
 	}
 }
 
-void gvusb2_snd_free_isoc(struct gvusb2_snd *dev)
+static void gvusb2_snd_free_isoc(struct gvusb2_snd *dev)
 {
 	int i;
 
@@ -340,7 +340,7 @@ void gvusb2_snd_free_isoc(struct gvusb2_snd *dev)
 	}
 }
 
-void gvusb2_snd_process_isoc(struct gvusb2_snd *dev, struct urb *urb)
+static void gvusb2_snd_process_isoc(struct gvusb2_snd *dev, struct urb *urb)
 {
 	int i;
 	unsigned char *buf_iter;
@@ -459,7 +459,7 @@ free_urbs:
  * Driver Stuff
  ****************************************************************************/
 
-int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_id *id)
+static int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_id *id)
 {
 	struct usb_device *udev;
 	struct gvusb2_snd *dev;
@@ -549,7 +549,7 @@ free_dev:
 	return ret;
 }
 
-void gvusb2_snd_disconnect(struct usb_interface *intf)
+static void gvusb2_snd_disconnect(struct usb_interface *intf)
 {
 	struct gvusb2_snd *dev;
 
