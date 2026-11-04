@@ -60,6 +60,7 @@ struct utk_ev {
 	enum utk_ev_kind kind;
 	int a;
 	int b;
+	int mask;	/* EV_REG_MASK only: the read-modify-write mask */
 };
 
 static struct utk_ev utk_ev[UTK_MAX_EV];
@@ -212,8 +213,9 @@ int gvusb2_write_reg(struct gvusb2_dev *dev, u16 reg, u8 value)
 int gvusb2_set_reg_mask(struct gvusb2_dev *dev, u16 reg, u8 mask, u8 value)
 {
 	(void)dev;
-	(void)mask;
 	utk_log(EV_REG_MASK, reg, value);
+	if (utk_nev <= UTK_MAX_EV)
+		utk_ev[utk_nev - 1].mask = mask;
 	return 0;
 }
 
@@ -1070,6 +1072,15 @@ static void test_cropping_write_sequence(void)
 		else
 			assert(strstr(utk_warn, "ntsc") != NULL);
 	}
+
+	/* A decoder write that fails is not a reason to abandon the rest: the
+	 * fork owns the TW9910 and the whole plan is still sent. */
+	utk_reset();
+	dev = utk_vid();
+	utk_fail_i2c_write = 1;
+	set_tw9910_cropping(dev, V4L2_STD_PAL, 0);
+	assert(utk_count(EV_I2C_WRITE, UTK_ANY, UTK_ANY) == 7);
+	assert(utk_i2c_written(0x09) == 0x22);
 }
 
 /* The VBI argument is a count/flag, not a boolean: only > 0 means VBI. */
@@ -1467,15 +1478,21 @@ static void test_s_std_pal(void)
 	utk_reset();
 	dev = utk_vid();
 	dev->standard = V4L2_STD_NTSC_M;
+	utk_set_vbi(1);
 
 	assert(gvusb2_vidioc_s_std(NULL, NULL, V4L2_STD_PAL) == 0);
 	assert(dev->standard == V4L2_STD_PAL);
 
-	/* TW9910 standard selection. */
+	/* TW9910 standard selection, then the full-frame crop both callers
+	 * resolve from the VBI control. */
 	assert(utk_i2c_written(0x1c) == 0x97);
-	/* STK1150 crop follows the control values (vertical_start 2,
-	 * horizontal_start 4). */
-	assert(utk_count(EV_REG_WRITE, 0x0116, 0x22) == 1);
+	assert(utk_i2c_written(0x09) == 0x37);	/* PAL + VBI VACTIVE */
+	/* STK1150 crop: VBI fixes the line counts (0x37 lines, high byte
+	 * set) and the horizontal window still comes from the controls
+	 * (horizontal_start 4 -> 0xa4). */
+	assert(utk_count(EV_REG_WRITE, 0x0112, 3) == 1);
+	assert(utk_count(EV_REG_WRITE, 0x0116, 0x37) == 1);
+	assert(utk_count(EV_REG_WRITE, 0x0117, 0x01) == 1);
 	assert(utk_count(EV_REG_WRITE, 0x0114, 0xa4) == 1);
 	/* PAL holds fewer lines above active video: 1..3, not 1..4. */
 	assert(dev->vertical_start->minimum == 1);
@@ -1626,6 +1643,9 @@ static void test_start_streaming(void)
 	dev = utk_vid();
 	dev->standard = V4L2_STD_PAL;
 	dev->sequence = 42;
+	/* VBI on: the start must crop for the full frame, not the active
+	 * window, so the decoder's VACTIVE register decides it. */
+	utk_set_vbi(1);
 	utk_queue_buf(&b, dev);
 
 	assert(gvusb2_vb2_start_streaming(&dev->vb2q, 1) == 0);
@@ -1651,6 +1671,7 @@ static void test_start_streaming(void)
 	assert(sstream < enable);
 	assert(enable < submit);
 	assert(utk_i2c_written(0x1c) == 0x97);	/* PAL, from the standard */
+	assert(utk_i2c_written(0x09) == 0x37);	/* PAL + VBI VACTIVE */
 	assert(utk_i2c_written(0x0c) >= 0);	/* black level reapplied */
 	/* The buffer stays queued and nothing is returned to userspace. */
 	assert(!list_empty(&dev->buf_list));
@@ -1749,6 +1770,33 @@ static void test_start_streaming_lock_failure(void)
  * vb2 setup and video registration
  ****************************************************************************/
 
+/* gvusb2_vb2_setup() is the contract with vb2: a capture queue of the
+ * driver's private buffer type, all three IO modes, the driver's own lock and
+ * its ops table. */
+static void test_vb2_setup(void)
+{
+	struct gvusb2_vid *dev = utk_vid();
+
+	utk_reset();
+	dev = utk_vid();
+	assert(gvusb2_vb2_setup(dev) == 0);
+
+	assert(dev->vb2q.type == V4L2_BUF_TYPE_VIDEO_CAPTURE);
+	assert(dev->vb2q.io_modes == (VB2_MMAP | VB2_READ | VB2_USERPTR));
+	assert(dev->vb2q.drv_priv == dev);
+	assert(dev->vb2q.buf_struct_size == sizeof(struct gvusb2_vb));
+	assert(dev->vb2q.ops->queue_setup == gvusb2_vb2_queue_setup);
+	assert(dev->vb2q.ops->buf_queue == gvusb2_vb2_buf_queue);
+	assert(dev->vb2q.ops->start_streaming == gvusb2_vb2_start_streaming);
+	assert(dev->vb2q.ops->stop_streaming == gvusb2_vb2_stop_streaming);
+	assert(dev->vb2q.mem_ops == &vb2_vmalloc_memops);
+	assert(dev->vb2q.lock == &dev->vb2q_lock);
+	assert(dev->vb2q.timestamp_flags ==
+	       V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC);
+	/* vb2 calls buf_queue against this list; it must start empty */
+	assert(list_empty(&dev->buf_list));
+}
+
 /* Registration wires the device up and puts the controls at their defaults. */
 static void test_v4l2_register(void)
 {
@@ -1770,8 +1818,14 @@ static void test_v4l2_register(void)
 	assert(dev->horizontal_start->val == 4);
 	assert(dev->vertical_start->minimum == 1);
 	assert(dev->vertical_start->maximum == 4);
-	/* STK1150 left in double-word mode. */
-	assert(utk_count(EV_REG_MASK, 0x05f0, 0x08) == 1);
+	/* STK1150 left in double-word mode: 0x08 in the register, set through a
+	 * 0x08 read-modify-write mask. */
+	{
+		int mask_ev = utk_find(0, EV_REG_MASK, 0x05f0, 0x08);
+
+		assert(mask_ev >= 0);
+		assert(utk_ev[mask_ev].mask == 0x08);
+	}
 	assert(dev->sd_tw9910 == &utk_subdev);
 }
 
@@ -1851,6 +1905,7 @@ int main(void)
 	test_stop_streaming();
 	test_start_streaming_lock_failure();
 
+	test_vb2_setup();
 	test_v4l2_register();
 	test_video_register();
 

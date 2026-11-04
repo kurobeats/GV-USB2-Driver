@@ -36,6 +36,9 @@ struct utk_snd_state {
 	int period_elapsed_calls;
 	struct snd_pcm_substream *period_substream;
 
+	/* Transfer buffers: freed by kfree() in gvusb2_snd_free_isoc(). */
+	int kfree_calls;
+
 	/* DMA ring allocation. */
 	int vmalloc_calls;
 	int vfree_calls;
@@ -145,7 +148,7 @@ int gvusb2_snd_reset_adc(struct gvusb2_dev *dev)
 }
 
 /*****************************************************************************
- * vmalloc
+ * vmalloc / slab
  ****************************************************************************/
 
 void *vmalloc(unsigned long size)
@@ -161,6 +164,13 @@ void vfree(const void *addr)
 {
 	utk.vfree_calls++;
 	free((void *)addr);
+}
+
+/* gvusb2_snd_free_isoc() frees each urb's transfer buffer exactly once. */
+void kfree(const void *ptr)
+{
+	utk.kfree_calls++;
+	free((void *)ptr);
 }
 
 struct page *vmalloc_to_page(const void *addr)
