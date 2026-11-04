@@ -152,8 +152,12 @@ static int gvusb2_snd_capture_open(struct snd_pcm_substream *substream)
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 	ret = gvusb2_snd_submit_isoc(dev);
-	if (ret < 0)
+	if (ret < 0) {
+		/* ALSA does not call ->close for an open that failed: drop the
+		 * claim and stop whatever URBs did submit */
 		dev->substream = NULL;
+		gvusb2_snd_cancel_isoc(dev);
+	}
 
 	return ret;
 }
@@ -402,17 +406,20 @@ static void gvusb2_snd_isoc_irq(struct urb *urb)
 
 static int gvusb2_snd_submit_isoc(struct gvusb2_snd *dev)
 {
-	int i, ret;
+	int i, first_err = 0;
 
 	for (i = 0; i < GVUSB2_NUM_URBS; i++) {
-		ret = usb_submit_urb(dev->urbs[i], GFP_KERNEL);
-		if (ret < 0)
-			/* TODO: clean up */
+		int ret = usb_submit_urb(dev->urbs[i], GFP_KERNEL);
+
+		if (ret < 0) {
 			gvusb2_dbg(&dev->intf->dev,
 				"error submitting urb %d\n", ret);
+			if (first_err == 0)
+				first_err = ret;
+		}
 	}
 
-	return 0;
+	return first_err;
 }
 
 static int gvusb2_snd_allocate_urbs(struct gvusb2_snd *dev)

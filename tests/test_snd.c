@@ -251,6 +251,35 @@ static void test_second_open_is_busy(void)
 	assert(rt_second->hw.period_bytes_min == 4096);
 }
 
+/* BUG: gvusb2_snd_submit_isoc() swallowed usb_submit_urb() errors and always
+ * returned 0, so a stream whose URBs never started opened successfully and
+ * simply never delivered audio. */
+static void test_open_unwinds_on_submit_failure(void)
+{
+	struct gvusb2_snd *dev;
+	struct snd_pcm_substream sub;
+	struct snd_pcm_runtime *runtime;
+	int ret;
+
+	utk_reset();
+	dev = utk_dev();
+	runtime = utk_runtime(1024, 1024, 4096);
+
+	utk.submit_fail = 1;
+	ret = utk_capture_open(dev, &sub, runtime);
+	assert(ret < 0);
+	/* the open must not leave the substream claimed ... */
+	assert(dev->substream == NULL);
+	/* ... nor URBs running that ALSA will never close (it does not call
+	 * ->close after a failed ->open) */
+	assert(utk.kill_calls == GVUSB2_NUM_URBS);
+
+	/* and the device is still openable once the USB side recovers */
+	utk.submit_fail = 0;
+	assert(utk_capture_open(dev, &sub, runtime) == 0);
+	assert(dev->substream == &sub);
+}
+
 /*****************************************************************************
  * isochronous completion accounting
  ****************************************************************************/
@@ -766,6 +795,7 @@ int main(void)
 	test_period_constraint_arithmetic();
 
 	test_second_open_is_busy();
+	test_open_unwinds_on_submit_failure();
 
 	test_pointer_advances_by_delivered_frames();
 	test_partial_packets_and_stride();
