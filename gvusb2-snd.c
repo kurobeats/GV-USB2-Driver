@@ -394,6 +394,11 @@ static void gvusb2_snd_isoc_irq(struct urb *urb)
 
 	gvusb2_snd_process_isoc(dev, urb);
 
+	/* a completion can still arrive after ->close killed the URBs; do not
+	 * resurrect one for a stream that no longer exists */
+	if (dev->substream == NULL)
+		return;
+
 	for (i = 0; i < urb->number_of_packets; i++) {
 		urb->iso_frame_desc[i].status = 0;
 		urb->iso_frame_desc[i].actual_length = 0;

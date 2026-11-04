@@ -280,6 +280,40 @@ static void test_open_unwinds_on_submit_failure(void)
 	assert(dev->substream == &sub);
 }
 
+/* A completion that arrives for an urb killed by close must not write into the
+ * runtime ALSA has already torn down, nor resurrect the urb. */
+static void test_close_stops_completion(void)
+{
+	static const unsigned int lens[] = { 24 };
+	struct gvusb2_snd *dev;
+	struct snd_pcm_substream sub;
+	struct snd_pcm_runtime *runtime;
+	struct urb *urb;
+	int submits;
+
+	utk_reset();
+	dev = utk_dev();
+	runtime = utk_runtime(1024, 1024, 4096);
+	assert(utk_capture_open(dev, &sub, runtime) == 0);
+
+	urb = dev->urbs[0];
+	utk_fill_packets(urb, 1, lens, NULL);
+	submits = utk.submit_calls;
+
+	assert(gvusb2_snd_capture_close(&sub) == 0);
+
+	urb->complete(urb);
+
+	assert(dev->hw_ptr == 0);	/* pointer not moved */
+	assert(dev->dma_offset == 0);	/* ring not consumed */
+	assert(dev->avail == 0);
+	utk_expect_zero(runtime->dma_area, 0, 24);
+	/* BUG: the completion handler resubmitted unconditionally, so a
+	 * completion in flight during close left a live urb behind for a stream
+	 * that no longer exists. */
+	assert(utk.submit_calls == submits);
+}
+
 /*****************************************************************************
  * isochronous completion accounting
  ****************************************************************************/
@@ -796,6 +830,7 @@ int main(void)
 
 	test_second_open_is_busy();
 	test_open_unwinds_on_submit_failure();
+	test_close_stops_completion();
 
 	test_pointer_advances_by_delivered_frames();
 	test_partial_packets_and_stride();
