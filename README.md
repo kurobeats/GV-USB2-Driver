@@ -1,104 +1,264 @@
-GV-USB2 Linux Driver
-====================
+# GV-USB2 Linux Driver
 
-A linux driver for the IO-DATA GV-USB2 SD capture device.
+A Linux kernel driver for the **I-O DATA GV-USB2 / GV-USB2/E** USB 2.0 SD video
+capture device. It exposes the device as a standard V4L2 capture node and an
+ALSA capture card, so anything that speaks V4L2 or ALSA works: ffmpeg, mpv,
+OBS, GStreamer, arecord, your own code.
 
-Installation
-===================
+It is a maintained fork of
+[Isaac-Lozano/GV-USB2-Driver](https://github.com/Isaac-Lozano/GV-USB2-Driver)
+with PAL support, corrected video geometry, hardened error handling and a
+host-side test suite.
 
-Simply run ./install.sh to compile and install the driver. Make sure you have Linux kernel headers installed and a basic GCC build environment. Also make sure you have a modern version of ffmpeg.
+**What you get**
 
-Note: the gvusb2-sound module requires alsa sound card index 7 to be open in this install script. If that index is already taken, edit the last command in the script to choose a different index. 
+| | |
+|---|---|
+| Device | USB ID `04bb:0532`, I-O DATA GV-USB2 / GV-USB2/E |
+| Video | 720x486 (NTSC) or 720x576 (PAL), UYVY 4:2:2, interlaced, frame rate follows the input |
+| VBI (teletext/closed captions) | 720x516 (NTSC) or 720x616 (PAL) |
+| Audio | 48 kHz, 16-bit stereo, capture only |
+| Inputs | Composite (RCA) and S-Video (mini-DIN), switchable at runtime |
+| Controls | Brightness, contrast, saturation, hue, sharpness, gain, AGC, crop offsets, VBI |
+| Hotplug | Safe to unplug while streaming |
 
-Usage
-====================
+---
 
-To set the video source: 
+## Requirements
 
-```sudo v4l2-ctl --set-input 1``` for S-video input
+- Linux with kernel headers matching the **running** kernel
+- A C compiler and `make`
+- Optional but handy: `v4l2-utils` (for `v4l2-ctl`), `alsa-utils` (for
+  `arecord`), `ffmpeg`
 
-```sudo v4l2-ctl --set-input 0``` for Composite input
+## Installation
 
-The default video standard is NTSC. To switch the standard to PAL, use the following command:
-
-```sudo v4l2-ctl -s pal```
-
-To monitor video from the GVUSB2 in real time:
-
-```ffplay  /dev/video0 -vf setdar=4/3,setfield=tff```
-
-Here is the command I use to capture lossless FFV1-encoded video and FLAC audio from the GVUSB2:
-
+```sh
+./install.sh
 ```
+
+That builds both modules, installs them under `/lib/modules/$(uname -r)`,
+and loads them. Two modules are involved: `gvusb2-video` (V4L2 capture) and
+`gvusb2-sound` (ALSA capture).
+
+The sound module is loaded with ALSA card index 7 by default; if that index is
+already taken, load it with another one:
+
+```sh
+sudo modprobe gvusb2-sound index=9
+```
+
+### Building for a different kernel
+
+If you build on one machine and run on another, use the shipped helper:
+
+```sh
+./build-and-ship.sh <kernel-version> <ssh-host>   # e.g. 6.11.4-301.fc41.x86_64 tetsuo
+```
+
+It builds against the target kernel's own headers and installs on the far end.
+Use this rather than copying a module built against your local `/usr/src`:
+distribution kernel headers ship a **rewritten config** (Fedora's literally
+says *"We are resetting this value to facilitate local builds"*), and a module
+built against it fails to load with `struct module section size must match`.
+
+## Quick start
+
+```sh
+# find the device (the node number depends on what else is plugged in)
+v4l2-ctl --list-devices
+ls -l /dev/v4l/by-id/ | grep -i GV-USB2     # stable path, use this in scripts
+
+# watch it live
+ffplay -f v4l2 -i /dev/video0 -vf setdar=4/3,setfield=tff
+
+# or record a minute (match -video_size to the standard, see "Frame sizes")
+ffmpeg -f v4l2 -video_size 720x486 -i /dev/video0 \
+       -f alsa -i hw:CARD=gvusb2,DEV=0 -t 60 out.mkv
+```
+
+Prefer the `/dev/v4l/by-id/...-video-index0` path over `/dev/videoN` in
+scripts: node numbers shuffle between boots.
+
+## Video
+
+### Inputs
+
+```sh
+v4l2-ctl -d /dev/video0 --set-input 0   # Composite (default)
+v4l2-ctl -d /dev/video0 --set-input 1   # S-Video
+```
+
+### Standards
+
+NTSC is the default. PAL also works:
+
+```sh
+v4l2-ctl -d /dev/video0 --set-standard pal
+v4l2-ctl -d /dev/video0 --set-standard ntsc
+```
+
+The standard cannot be changed while a stream is running — stop capturing
+first, otherwise the ioctl returns `EBUSY`.
+
+### Frame sizes
+
+| Standard | Normal | VBI enabled |
+|---|---|---|
+| NTSC | 720x486 | 720x516 |
+| PAL | 720x576 | 720x616 |
+
+VBI capture is 30 lines taller and starts earlier, so it includes the vertical
+blanking interval where teletext and closed captions live. The top lines of
+the VBI interval are not captured.
+
+```sh
+v4l2-ctl -d /dev/video0 --set-ctrl vbi_capture=1
+```
+
+### Controls
+
+All controls are standard V4L2. Values persist until the module is reloaded;
+applications should set what they need on start.
+
+| Control | Range | Default | Notes |
+|---|---|---|---|
+| `brightness` | 0–255 | 128 | |
+| `contrast` | 0–255 | 105 | |
+| `saturation` | 0–255 | 128 | |
+| `hue` | 0–255 | 128 | NTSC only |
+| `sharpness` | 0–15 | 0 | |
+| `gain_automatic` | 0–1 | 1 | AGC on/off |
+| `gain` | 0–255 | 0 | only active when `gain_automatic=0` |
+| `vertical_start` | 1–4 (1–3 on PAL) | 2 | higher values shift the picture up |
+| `horizontal_start` | 0–4 | 4 | higher values shift the picture left |
+| `vbi_capture` | 0–1 | 0 | adds the VBI lines |
+
+```sh
+v4l2-ctl -d /dev/video0 -c brightness=140
+v4l2-ctl -d /dev/video0 -c gain_automatic=0 -c gain=90
+```
+
+`v4l2-ctl --list-ctrls` on the device always prints the authoritative names,
+ranges and defaults for your kernel.
+
+### Interlacing
+
+The device delivers interlaced SD video, top field first. Leave it interlaced
+in the file (`setfield=tff`, `-flags +ilme+ildct`) and deinterlace at playback
+or in your editor — that keeps the most options open for archival.
+
+## Audio
+
+One ALSA capture device, card name `gvusb2`, device 0:
+
+```sh
+arecord -D hw:CARD=gvusb2,DEV=0 -f S16_LE -r 48000 -c 2 out.wav
+```
+
+Fixed at 48 kHz, 16-bit, stereo — that is what the hardware provides. The
+driver advertises a **21 ms minimum period** so media frameworks can timestamp
+audio finely; a coarser floor caused periodic audio dropouts in OBS.
+
+## Archival capture
+
+Lossless FFV1 video + FLAC audio, interlaced frames preserved:
+
+```sh
 ffmpeg \
-    -f v4l2 -framerate 29.97 -video_size 720x486 -rtbufsize 2G -thread_queue_size 1024 -i /dev/video0  \
-    -f alsa -ac 2 -rtbufsize 512M -thread_queue_size 1024 -i hw:CARD=gvusb2,DEV=0 \
-    -c:v ffv1 -level 3 -threads 4 -coder 1 -context 1 -slices 30 -slicecrc 1 -g 1 \
-    -vf setdar=4/3,setfield=tff -flags +ilme+ildct -fflags +genpts+igndts -fps_mode:v passthrough \
-    -c:a flac -compression_level 8 \
-    OUTPUT_FILE.mkv
+  -f v4l2 -framerate 29.97 -video_size 720x486 -rtbufsize 2G -thread_queue_size 1024 -i /dev/video0 \
+  -f alsa -ac 2 -rtbufsize 512M -thread_queue_size 1024 -i hw:CARD=gvusb2,DEV=0 \
+  -c:v ffv1 -level 3 -threads 4 -coder 1 -context 1 -slices 30 -slicecrc 1 -g 1 \
+  -vf setdar=4/3,setfield=tff -flags +ilme+ildct -fflags +genpts+igndts -fps_mode:v passthrough \
+  -c:a flac -compression_level 8 \
+  OUTPUT_FILE.mkv
 ```
 
-IMPORTANT NOTES FOR ARCHIVAL WITH THE ABOVE COMMAND:
+Notes:
 
-- With this command both the video and audio streams are losslessly compressed in realtime, which requires ample available PC resources. 
-- You should have at least 8GB free RAM and a minimum of 4 CPU cores to allow enough buffer space and improve multithreading performance. Writing directly to HDDs is NOT RECOMMENDED.
-- If you are capturing PAL video, make sure to change framerate to 25 and video_size to 720x576 in the above command.
-- For capturing VBI data, change -video_size to the following: 720x516 for NTSC, 720x616 for PAL
+- Compression is done in realtime: allow ~8 GB of free RAM and 4+ CPU cores.
+  Recording straight to a spinning disk is not recommended.
+- PAL: change to `-framerate 25 -video_size 720x576`.
+- VBI: use `-video_size 720x516` (NTSC) or `720x616` (PAL).
 
-Note: These commands assume that /dev/video0 points to the GVUSB2. If you are using a different index, set the -d flag in v4l2_ctl to point to the correct device.
+## Streaming
 
-# Streaming with the GVUSB2
+See this guide: <https://gist.github.com/scaramangado/4e09031d782cbad8a4446ba101f43ef7>
 
-Use the instructions provided in this wonderful gist: https://gist.github.com/scaramangado/4e09031d782cbad8a4446ba101f43ef7
+## How it works (for the curious)
 
-Setting Device Controls
-====================
+The device is a bridge chip (STK1150) plus a video decoder (TW9910) behind a
+USB 2.0 isochronous endpoint:
 
-Enabling capture of VBI (for a total height of 516px-- the top 9 lines are not able to be captured):
+- Video arrives on an isochronous endpoint in 3072-byte microframe packets,
+  four URBs of 256 packets each in flight. Every packet carries a small header
+  with a sequence counter; the driver assembles two interleaved fields into one
+  interlaced frame and hands it to videobuf2.
+- If packets go missing the counter jumps, the driver restarts the field rather
+  than writing misaligned data — that is the `counter desync` line in `dmesg`.
+- The TW9910 is configured over the bridge's I2C engine: video standard,
+  cropping/active windows, black level and the analog input mux all live there.
+- Audio is a second isochronous stream feeding ALSA at a fixed 48 kHz.
 
-```sudo v4l2-ctl -c vbi_capture=1```
+The 720x486 (not 480) height is deliberate: the driver returns the whole
+received signal including a few lines of blanking. White or black bands at the
+picture edge and a few millimetres of flicker at the bottom are normal for
+capture devices — I-O DATA documents the same for the Windows driver.
 
-Brightness (default 128):
-
-```sudo v4l2-ctl -c brightness=X```
-
-Contrast (default 105):
-
-```sudo v4l2-ctl -c contrast=X```
-
-Saturation (default 128):
-
-```sudo v4l2-ctl -c saturation=X```
-
-Hue (NTSC only, default 128):
-
-```sudo v4l2-ctl -c hue=X```
-
-Sharpness (Range 0-16, default 0):
-
-```sudo v4l2-ctl -c sharpness=X```
-
-Vertical Start (increasing this value shifts the image upward, max 4, default 2):
-
-```sudo v4l2-ctl -c vertical_start=X```
-
-Horizontal Start (increasing this value shifts the image leftward, max 4, default 4):
-
-```sudo v4l2-ctl -c horizontal_start=X```
-
-Disable Automatic Gain Control (AGC):
-
-```sudo v4l2-ctl -c gain_automatic=0```
-
-Manual Gain Setting (only takes effect when AGC is disabled):
-
-```sudo v4l2-ctl -c gain=X```
+Bandwidth is close to the USB 2.0 ceiling: ~21 MB/s needed against ~24.6 MB/s
+theoretically available. Use a port that is not shared with other busy
+isochronous devices if you see dropped frames.
 
 ## Tests
 
-Host-side unit tests for the frame assembly logic (no hardware or kernel
-headers needed):
+Two independent suites:
 
-    tests/run-tests.sh
+```sh
+tests/run-tests.sh        # host unit tests, no hardware or kernel headers
+tests/hw-test.sh          # on-device matrix, run on the capture machine
+```
 
+The host suite covers the pure logic (frame assembly, TW9910 register plans,
+ALSA period arithmetic) and compiles the real core/I2C code against fake kernel
+headers with a mock register engine. The hardware suite checks all four
+geometry modes, frame integrity, frame rate, kernel-log health, warmed-up
+steady state and the audio path. Both are expected to be green before any
+change is merged.
+
+## Troubleshooting
+
+**`Device or resource busy`** — something already holds the device (OBS, a
+browser tab, a stray `arecord`). Close it. `fuser -v /dev/video0` shows who.
+
+**Dropped frames / audio skips** — almost always USB bandwidth or host load.
+Try another port, remove other USB devices, close background applications. The
+driver already logs specific causes; check `dmesg | grep gvusb2`.
+
+**Bands at the edge / flicker at the bottom** — by design, see above. Adjust
+`vertical_start` / `horizontal_start` to trim, or crop in software.
+
+**No audio** — check `arecord -l` for card `gvusb2`, and make sure the source
+device actually has audio connected to the RCA inputs. A silent capture at
+about -90 dBFS is a missing source, not a broken driver.
+
+**Video looks wrong after standby or replug** — the driver handles hot-unplug
+and rebind; if a stream misbehaves, stop and restart it, or
+`sudo modprobe -r gvusb2-video gvusb2-sound && sudo modprobe gvusb2-video && sudo modprobe gvusb2-sound`.
+
+## Limitations
+
+- **720 pixels wide only.** The hardware can capture narrower widths (the
+  vendor software offers 352x240 up to 720x480); this driver does not expose
+  that yet.
+- **No tuner, no hardware scaling, no hardware deinterlacing.** The device is
+  a capture bridge; scaling and deinterlacing belong in software.
+- **PAL/SECAM is beyond the vendor spec.** I-O DATA documents NTSC only; it
+  works because the decoder chip is multi-standard, and PAL is regularly
+  tested, but treat it as an extension rather than a supported mode.
+- Audio is capture-only, as the hardware has no output path.
+
+## Licence
+
+Dual licensed BSD-3-Clause / GPL-2.0 — see `LICENSE.bsd` and `LICENSE.gpl`.
+Original driver by Isaac Lozano; this fork carries PAL support, geometry fixes
+and the test suites.
