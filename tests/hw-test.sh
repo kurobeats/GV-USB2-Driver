@@ -58,6 +58,9 @@ printf "        oops/BUG/trace:     %s\n" "$(errs)"
 echo "== steady-state integrity (warm up, then 300 frames)"
 v4l2-ctl -d $DEV --set-standard=pal >/dev/null 2>&1
 timeout 20 v4l2-ctl -d $DEV --stream-mmap=4 --stream-count=60 >/dev/null 2>&1
+# Let the warm-up's last printk land before clearing, or the clear races it and
+# the earlier phase's overflow lines get counted as steady state.
+sleep 2
 sudo dmesg -C
 timeout 45 v4l2-ctl -d $DEV --stream-mmap=4 --stream-count=300 >/dev/null 2>&1
 ss_ovf=$(ovf)
