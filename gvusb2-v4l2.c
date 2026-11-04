@@ -57,10 +57,18 @@ void get_resolution(struct gvusb2_vid *dev, int *width, int *height)
 void set_tw9910_cropping(struct gvusb2_vid *dev, v4l2_std_id std, int vbi)
 {
 	struct tw9910_reg plan[7];
-	int i, n;
+	int i, n, blc;
 
 	dev_warn(&dev->intf->dev, "setting TW9910 %s cropping.\n",
 		 (std & V4L2_STD_625_50) ? "PAL" : "ntsc");
+
+	/* Black level is a read-modify-write so the clamp's other bits survive;
+	 * a failed read just leaves the current level alone. */
+	blc = i2c_smbus_read_byte_data(&dev->i2c_client, 0x0c);
+	if (blc >= 0)
+		i2c_smbus_write_byte_data(&dev->i2c_client, 0x0c,
+			tw9910_black_level((unsigned char)blc,
+				!!(std & V4L2_STD_625_50)));
 
 	/* The fork owns the TW9910: nothing else may write these registers. */
 	n = tw9910_regplan(!!(std & V4L2_STD_625_50), vbi > 0, plan,
@@ -654,13 +662,24 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
 			{0x1a, 0x0a}, // enable anti-aliasing filters but disable power-saving mode
 			{0x1b, 0x00},
 			//{0x1c, 0x0f},
-			//{0x28, 0x0e},
+			/* Vendor-tuned fixed-point/colour defaults, read off the Windows
+			 * driver's TW9910 init. The upstream list had these commented
+			 * out (0x28/0x2f/0x6b-0x6d) or missing entirely; without them the
+			 * chip keeps its reset values and the comb filter and clamp are
+			 * untuned. */
+			{0x28, 0x0e},
+			{0x29, 0x03},
+			{0x2d, 0x07},
 			//{0x2e, 0xa5},
-			//{0x2f, 0x06},
-			//{0x6b, 0x26},
-			//{0x6c, 0x36},
-			//{0x6d, 0xf0},
+			{0x2f, 0x06},
+			{0x4c, 0x0d},
+			{0x55, 0x00},
+			{0x6b, 0x26},
+			{0x6c, 0x36},
+			{0x6d, 0xf0},
 			{0x6e, 0x28},
+			{0x6f, 0x98},
+			{0x64, 0x55},
 			{0x22, 0x00}, // Set initial AGC gain to 0
 			{0x23, 0xff}, // disable "white peaking" AGC correction
 			{0x06, 0x80},
