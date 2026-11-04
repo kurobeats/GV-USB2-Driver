@@ -13,6 +13,18 @@ echo "== module state"
 lsmod | grep -q "^gvusb2_video" && ok "gvusb2_video loaded" || bad "gvusb2_video missing"
 lsmod | grep -q "^gvusb2_sound" && ok "gvusb2_sound loaded" || bad "gvusb2_sound missing"
 
+# S_STD and REQBUFS need the device to ourselves; anything holding it (OBS,
+# a stray arecord) makes every standard switch fail with -EBUSY and the
+# geometry checks below then report nonsense.
+if v4l2-ctl -d $DEV --set-standard=pal >/dev/null 2>&1; then
+  :
+else
+  echo "  FAIL  $DEV is busy or missing (S_STD refused); close OBS/arecord first"
+  echo
+  echo "RESULT: FAILURES PRESENT"
+  exit 1
+fi
+
 sudo dmesg -C
 
 echo "== standard / VBI matrix"
