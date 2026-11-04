@@ -41,10 +41,9 @@ static inline void *kzalloc(size_t size, gfp_t flags)
 	return calloc(1, size);
 }
 
-static inline void kfree(const void *ptr)
-{
-	free((void *)ptr);
-}
+/* Counted: the driver's transfer buffers are freed exactly once per urb, and
+ * a missing kfree is a leak nothing else would notice. */
+void kfree(const void *ptr);
 
 struct page { int unused; };
 

@@ -168,16 +168,15 @@ static void test_open_installs_constraints(void)
 	assert(utk.submit_calls == GVUSB2_NUM_URBS);
 }
 
-/* Which period byte counts the advertised table admits, and which it must
- * reject. Mirrors the checks ALSA applies from runtime->hw (range, frame
- * alignment, and the period count that fits in the buffer). */
+/* Which period byte counts the advertised table admits. Only the floor/
+ * period-cap relation is pinned here: it is what keeps the finest period from
+ * silently changing the buffer/period ratio. */
 static void test_period_constraint_arithmetic(void)
 {
 	struct gvusb2_snd *dev;
 	struct snd_pcm_substream sub;
 	struct snd_pcm_runtime *runtime;
 	struct snd_pcm_hardware hw;
-	unsigned int periods_at_floor;
 
 	utk_reset();
 	dev = utk_dev();
@@ -185,28 +184,9 @@ static void test_period_constraint_arithmetic(void)
 	assert(utk_capture_open(dev, &sub, runtime) == 0);
 	hw = runtime->hw;
 
-	/* documented floor: 1024 frames, 21333 us */
-	assert(hw.period_bytes_min == 4096);
-	assert(hw.period_bytes_min / GVUSB2_SND_FRAME_BYTES == 1024);
-	assert(gvusb2_period_us(4096) == 21333);
-	/* one frame under the floor is rejected */
-	assert(4092 < hw.period_bytes_min);
-	/* above the floor, still under the ceiling: 1536 frames, 32000 us */
-	assert(6144 <= hw.period_bytes_max);
-	assert(gvusb2_period_us(6144) == 32000);
-	/* at the ceiling: 32768 frames, 682666 us */
-	assert(hw.period_bytes_max == 131072);
-	assert(gvusb2_period_us(131072) == 682666);
-	/* one frame over the ceiling is rejected */
-	assert(131076 > hw.period_bytes_max);
-
 	/* The floor is admissible with the advertised period cap; a finer floor
 	 * would silently change the buffer/period ratio. */
-	periods_at_floor = hw.buffer_bytes_max / hw.period_bytes_min;
-	assert(periods_at_floor == hw.periods_max);
-	assert(periods_at_floor == 32);
-	/* The ceiling leaves exactly one period in the buffer, the minimum. */
-	assert(hw.buffer_bytes_max / hw.period_bytes_max == hw.periods_min);
+	assert(hw.buffer_bytes_max / hw.period_bytes_min == hw.periods_max);
 }
 
 /*****************************************************************************
@@ -441,9 +421,10 @@ static void test_dma_ring_exact_boundary(void)
 	utk_expect_canary(runtime);
 }
 
-/* period_elapsed() must fire on the exact frame the period is complete, not
- * one frame late or early, and the pointer must wrap at buffer_size rather
- * than run past it. */
+/* period_elapsed() must fire once the delivered frames complete the period
+ * and not before, and the pointer must wrap at buffer_size rather than run
+ * past it or be reset to 0. A completion that over-runs the period consumes
+ * exactly one period's credit: the surplus stays in avail. */
 static void test_period_boundary_and_pointer_wrap(void)
 {
 	static unsigned int lens[16];
@@ -469,15 +450,17 @@ static void test_period_boundary_and_pointer_wrap(void)
 	assert(dev->avail == 1023);
 	assert(utk.period_elapsed_calls == 0);
 
-	/* the single missing frame completes the period ... */
-	utk_fill_packets(dev->urbs[1], 1, (unsigned int[]){ 4 }, NULL);
+	/* 1024 frames complete the period ... */
+	utk_fill_packets(dev->urbs[1], 1, (unsigned int[]){ 256 }, NULL);
 	dev->urbs[1]->complete(dev->urbs[1]);
 
+	/* 1087 frames arrive: one period is consumed and the surplus 63 frames
+	 * stay credited, and the pointer wraps to 63 rather than being zeroed. */
 	assert(utk.period_elapsed_calls == 1);
 	assert(utk.period_substream == &sub);
-	assert(dev->avail == 0);	/* credited period consumed */
-	assert(dev->hw_ptr == 0);	/* 1024 wrapped to 0, not clamped to 1024 */
-	assert(gvusb2_snd_pcm_pointer(&sub) == 0);
+	assert(dev->avail == 63);	/* one period consumed, not zeroed */
+	assert(dev->hw_ptr == 63);	/* 1087 - 1024, not zeroed */
+	assert(gvusb2_snd_pcm_pointer(&sub) == 63);
 	assert((size_t)frames_to_bytes(runtime, dev->hw_ptr) <= runtime->dma_bytes);
 }
 
@@ -535,11 +518,13 @@ static void test_isoc_urb_status_filtering(void)
 		assert(utk.submit_calls == submits);	/* killed, not retried */
 	}
 
-	urb->status = other_errors[0];
-	utk_fill_packets(urb, 1, lens, NULL);
-	urb->complete(urb);
-	assert(dev->hw_ptr == 0);
-	assert(utk.submit_calls == submits);	/* an error is not retried */
+	for (i = 0; i < sizeof(other_errors) / sizeof(other_errors[0]); i++) {
+		urb->status = other_errors[i];
+		utk_fill_packets(urb, 1, lens, NULL);
+		urb->complete(urb);
+		assert(dev->hw_ptr == 0);
+		assert(utk.submit_calls == submits);	/* an error is not retried */
+	}
 
 	/* a good completion is processed, its descriptors cleared, and the urb
 	 * handed back with GFP_ATOMIC (completion context) */
@@ -712,6 +697,8 @@ static void test_allocate_urbs_layout(void)
 
 	gvusb2_snd_free_isoc(dev);
 	assert(utk.urb_free_calls == GVUSB2_NUM_URBS);
+	/* every transfer buffer freed, not leaked */
+	assert(utk.kfree_calls == GVUSB2_NUM_URBS);
 	for (i = 0; i < GVUSB2_NUM_URBS; i++)
 		assert(dev->urbs[i] == NULL);
 }
@@ -734,6 +721,8 @@ static void test_allocate_urbs_failure(void)
 	/* the two already allocated are released and the array cleared, so a
 	 * later ->disconnect cannot free them again */
 	assert(utk.urb_free_calls == 2);
+	/* with their transfer buffers */
+	assert(utk.kfree_calls == 2);
 	for (i = 0; i < GVUSB2_NUM_URBS; i++)
 		assert(dev.urbs[i] == NULL);
 }

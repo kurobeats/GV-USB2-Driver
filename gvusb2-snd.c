@@ -166,8 +166,10 @@ static int gvusb2_snd_capture_close(struct snd_pcm_substream *substream)
 {
 	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
 
-	dev->substream = NULL;
+	/* cancel first: once usb_kill_urb() returns no completion can still be
+	 * running, so dropping the claim afterwards cannot strand one */
 	gvusb2_snd_cancel_isoc(dev);
+	dev->substream = NULL;
 
 	return 0;
 }
