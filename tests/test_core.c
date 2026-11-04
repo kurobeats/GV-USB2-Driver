@@ -179,6 +179,21 @@ static void test_set_reg_mask_rmw(void)
 	assert(utk_regs[0x0007] == 0xd5); /* (0xc5 & ~0x30) | 0x10 */
 }
 
+/* BUG: gvusb2_set_reg_mask checked the read's stale `ret` after the write, so
+ * a failed write was silently reported as success. */
+static void test_set_reg_mask_write_error(void)
+{
+	struct gvusb2_dev dev;
+	int ret;
+
+	utk_reset();
+	dev.udev = NULL;
+	utk_fail_usb_write = 1;
+
+	ret = gvusb2_set_reg_mask(&dev, 0x0007, 0x30, 0x10);
+	assert(ret < 0);
+}
+
 /* I2C bus register map: address math (addr << 1, read-bit set for reads),
  * subaddress/data registers and trigger commands per direction. */
 static void test_i2c_regmap_table(void)
@@ -323,6 +338,7 @@ int main(void)
 	test_gpio_macros();
 	test_read_write_roundtrip();
 	test_set_reg_mask_rmw();
+	test_set_reg_mask_write_error();
 	test_i2c_regmap_table();
 	test_i2c_xfer_shapes();
 	test_i2c_xfer_unsupported();

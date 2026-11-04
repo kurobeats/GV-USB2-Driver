@@ -71,7 +71,7 @@ int gvusb2_set_reg_mask(struct gvusb2_dev *dev, u16 reg, u8 mask, u8 value)
 	if (ret < 0)
 		return ret;
 
-	gvusb2_write_reg(dev, reg, (reg_val & ~mask) | value);
+	ret = gvusb2_write_reg(dev, reg, (reg_val & ~mask) | value);
 	if (ret < 0)
 		return ret;
 
