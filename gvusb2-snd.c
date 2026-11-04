@@ -139,19 +139,21 @@ static int gvusb2_snd_capture_open(struct snd_pcm_substream *substream)
 	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
 
+	spin_lock_irqsave(&dev->lock, flags);
+	if (dev->substream != NULL) {
+		spin_unlock_irqrestore(&dev->lock, flags);
+		return -EBUSY;
+	}
+	/* claim before submitting so no isoc work can be started for a
+	 * rejected open; URBs only become active below, so an unwind here
+	 * is race-free */
+	dev->substream = substream;
+	runtime->hw = gvusb2_snd_hw;
+	spin_unlock_irqrestore(&dev->lock, flags);
+
 	ret = gvusb2_snd_submit_isoc(dev);
 	if (ret < 0)
-		return ret;
-
-	spin_lock_irqsave(&dev->lock, flags);
-	if (dev->substream == NULL) {
-		dev->substream = substream;
-		runtime->hw = gvusb2_snd_hw;
-		ret = 0;
-	} else {
-		ret = -EBUSY;
-	}
-	spin_unlock_irqrestore(&dev->lock, flags);
+		dev->substream = NULL;
 
 	return ret;
 }
