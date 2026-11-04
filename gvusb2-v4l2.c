@@ -105,7 +105,8 @@ void set_stk1150_cropping(struct gvusb2_vid *dev, v4l2_std_id std, int vbi, int 
 	gvusb2_write_reg(&dev->gv, 0x0115, 0x05);
 }
 
-void gvusb2_vid_clear_queue(struct gvusb2_vid *dev)
+void gvusb2_vid_clear_queue(struct gvusb2_vid *dev,
+	enum vb2_buffer_state state)
 {
 	struct gvusb2_vb *buf;
 	unsigned long flags;
@@ -115,12 +116,11 @@ void gvusb2_vid_clear_queue(struct gvusb2_vid *dev)
 		buf = list_first_entry(&dev->buf_list,
 			struct gvusb2_vb, list);
 		list_del(&buf->list);
-		vb2_buffer_done(&buf->vb.vb2_buf, VB2_BUF_STATE_ERROR);
+		vb2_buffer_done(&buf->vb.vb2_buf, state);
 	}
 
 	if (dev->current_buf) {
-		vb2_buffer_done(&dev->current_buf->vb.vb2_buf,
-			VB2_BUF_STATE_ERROR);
+		vb2_buffer_done(&dev->current_buf->vb.vb2_buf, state);
 		dev->current_buf = NULL;
 	}
 	spin_unlock_irqrestore(&dev->buf_list_lock, flags);
@@ -207,8 +207,20 @@ static int gvusb2_vb2_start_streaming(struct vb2_queue *vb2q,
 
 	/* submit urbs */
 	ret = gvusb2_vid_submit_urbs(dev);
-	if (ret < 0)
+	if (ret < 0) {
+		/* unwind: kill the URBs that did submit, restore the decoder and
+		 * the STK1150 to their stopped state, and drop the lock. */
+		gvusb2_vid_cancel_urbs(dev);
+		/* vb2 does not call stop_streaming when start_streaming fails,
+		 * so return the queued buffers here, or the queue wedges (list
+		 * nodes re-added on a retry STREAMON). QUEUED, not ERROR: the
+		 * buffers never started. */
+		gvusb2_vid_clear_queue(dev, VB2_BUF_STATE_QUEUED);
+		gvusb2_write_reg(&dev->gv, 0x0100, 0x33);
+		v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 0);
+		mutex_unlock(&dev->v4l2_lock);
 		return ret;
+	}
 
 	/* stop mutex */
 	mutex_unlock(&dev->v4l2_lock);
@@ -236,7 +248,7 @@ static void gvusb2_vb2_stop_streaming(struct vb2_queue *vb2q)
 	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_stream, 0);
 
 	/* clear queue */
-	gvusb2_vid_clear_queue(dev);
+	gvusb2_vid_clear_queue(dev, VB2_BUF_STATE_ERROR);
 
 	/* unlok mutex */
 	mutex_unlock(&dev->v4l2_lock);

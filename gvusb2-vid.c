@@ -501,7 +501,7 @@ int gvusb2_vid_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	gvusb2_stk1150_init(dev);
 
 	/* allocate URBs */
-	gvusb2_vid_allocate_urbs(dev);
+	ret = gvusb2_vid_allocate_urbs(dev);
 	if (ret < 0)
 		goto free_gvusb2;
 
@@ -556,7 +556,7 @@ void gvusb2_vid_disconnect(struct usb_interface *intf)
 	gvusb2_vid_free_urbs(dev);
 
 	/* clear buffer list queue */
-	gvusb2_vid_clear_queue(dev);
+	gvusb2_vid_clear_queue(dev, VB2_BUF_STATE_ERROR);
 
 	/* clean up v4l2 */
 	video_unregister_device(&dev->vdev);
