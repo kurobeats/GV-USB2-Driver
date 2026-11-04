@@ -59,7 +59,6 @@ static void test_pal_normal(void)
 {
 	const struct tw9910_reg want[] = {
 		{ 0x1c, 0x97 }, /* SDT: PAL */
-		{ 0x0c, 0xcc }, /* CNTRL1: 0 IRE */
 		{ 0x0b, 0xd2 }, /* HACTIVE */
 		{ 0x0a, 0x0d }, /* HDELAY */
 		{ 0x08, 0x17 }, /* VDELAY */
@@ -67,14 +66,13 @@ static void test_pal_normal(void)
 		{ 0x09, 0x22 }, /* VACTIVE */
 	};
 
-	expect_plan(1, 0, want, 7);
+	expect_plan(1, 0, want, 6);
 }
 
 static void test_ntsc_normal(void)
 {
 	const struct tw9910_reg want[] = {
 		{ 0x1c, 0x17 }, /* SDT: NTSC */
-		{ 0x0c, 0xdc }, /* CNTRL1: 7.5 IRE */
 		{ 0x0b, 0xd2 }, /* HACTIVE */
 		{ 0x0a, 0x10 }, /* HDELAY */
 		{ 0x08, 0x13 }, /* VDELAY */
@@ -82,14 +80,13 @@ static void test_ntsc_normal(void)
 		{ 0x09, 0xf4 }, /* VACTIVE */
 	};
 
-	expect_plan(0, 0, want, 7);
+	expect_plan(0, 0, want, 6);
 }
 
 static void test_pal_vbi(void)
 {
 	const struct tw9910_reg want[] = {
 		{ 0x1c, 0x97 },
-		{ 0x0c, 0xcc },
 		{ 0x0b, 0xd2 },
 		{ 0x0a, 0x0d },
 		{ 0x08, 0x02 },
@@ -97,14 +94,13 @@ static void test_pal_vbi(void)
 		{ 0x09, 0x37 },
 	};
 
-	expect_plan(1, 1, want, 7);
+	expect_plan(1, 1, want, 6);
 }
 
 static void test_ntsc_vbi(void)
 {
 	const struct tw9910_reg want[] = {
 		{ 0x1c, 0x17 },
-		{ 0x0c, 0xdc },
 		{ 0x0b, 0xd2 },
 		{ 0x0a, 0x10 },
 		{ 0x08, 0x02 },
@@ -112,7 +108,7 @@ static void test_ntsc_vbi(void)
 		{ 0x09, 0x05 },
 	};
 
-	expect_plan(0, 1, want, 7);
+	expect_plan(0, 1, want, 6);
 }
 
 /* The standard-selection register must actually switch: the whole reason the
@@ -122,10 +118,10 @@ static void test_sdt_differs_by_standard(void)
 	struct tw9910_reg pal[8], ntsc[8];
 	int i;
 
-	assert(tw9910_regplan(1, 0, pal, 8) == 7);
-	assert(tw9910_regplan(0, 0, ntsc, 8) == 7);
+	assert(tw9910_regplan(1, 0, pal, 8) == 6);
+	assert(tw9910_regplan(0, 0, ntsc, 8) == 6);
 
-	for (i = 0; i < 7; i++)
+	for (i = 0; i < 6; i++)
 		if (pal[i].reg == 0x1c)
 			assert(pal[i].val != ntsc[i].val);
 }
@@ -133,17 +129,37 @@ static void test_sdt_differs_by_standard(void)
 /* A too-small destination must be reported, not silently truncated. */
 static void test_plan_overflow(void)
 {
-	struct tw9910_reg plan[6];
+	struct tw9910_reg plan[5];
 
-	assert(tw9910_regplan(0, 0, plan, 6) == -1);
+	assert(tw9910_regplan(0, 0, plan, 5) == -1);
+}
+
+/* Black level is a read-modify-write: only the IRE bit (4) and bit 3 may
+ * change, every other clamp bit must survive the write. */
+static void test_black_level_rmw(void)
+{
+	static const unsigned char curs[] = { 0x00, 0xff, 0xdd, 0x1f };
+
+	for (unsigned int i = 0; i < sizeof(curs); i++) {
+		unsigned char n = tw9910_black_level(curs[i], 0);
+		unsigned char p = tw9910_black_level(curs[i], 1);
+
+		/* bits outside the two the vendor touches are preserved */
+		assert((n & ~0x18) == (curs[i] & ~0x18));
+		assert((p & ~0x18) == (curs[i] & ~0x18));
+		assert(n & 0x08);        /* bit 3 set in both standards */
+		assert(!(n & 0x10));     /* NTSC: 7.5 IRE, bit 4 clear */
+		assert(p & 0x10);        /* PAL: 0 IRE, bit 4 set */
+	}
 }
 
 /* The plan writes the registers in settle order: standard selection first,
- * then input level, then horizontal window, then the vertical geometry. */
+ * then horizontal window, then the vertical geometry. (Black level, 0x0c, is
+ * a read-modify-write applied outside the plan.) */
 static void test_plan_order(void)
 {
 	static const unsigned char regs[] = {
-		0x1c, 0x0c, 0x0b, 0x0a, 0x08, 0x07, 0x09
+		0x1c, 0x0b, 0x0a, 0x08, 0x07, 0x09
 	};
 	int pal, vbi;
 
@@ -152,11 +168,11 @@ static void test_plan_order(void)
 			struct tw9910_reg plan[8];
 			int n = tw9910_regplan(pal, vbi, plan, 8);
 
-			assert(n == 7);
-			for (int i = 0; i < 7; i++)
+			assert(n == 6);
+			for (int i = 0; i < 6; i++)
 				assert(plan[i].reg == regs[i]);
-			/* exact fit: a plan of 7 must fit in max 7 */
-			assert(tw9910_regplan(pal, vbi, plan, 7) == 7);
+			/* exact fit: a plan of 6 must fit in max 6 */
+			assert(tw9910_regplan(pal, vbi, plan, 6) == 6);
 		}
 }
 
@@ -169,7 +185,7 @@ static void test_hactive_pair(void)
 			struct tw9910_reg plan[8];
 			int n = tw9910_regplan(pal, vbi, plan, 8);
 
-			assert(n == 7);
+			assert(n == 6);
 			assert(decode_hi_lo(plan, n, 0x0b, 0) == 0x2d2);
 			/* the horizontal delay must lie inside the window */
 			assert(decode_hi_lo(plan, n, 0x0a, 2) < 0x2d2);
@@ -187,24 +203,24 @@ static void test_vertical_geometry_monotonic(void)
 
 	for (int i = 0; i < 4; i++) {
 		idx = tw9910_regplan(i / 2, i % 2, plans[i], 8);
-		assert(idx == 7);
+		assert(idx == 6);
 	}
 
 	for (int std = 0; std < 2; std++) {
-		unsigned int vact_n = decode_hi_lo(plans[std * 2], 7, 0x09, 4);
-		unsigned int vact_v = decode_hi_lo(plans[std * 2 + 1], 7, 0x09, 4);
-		unsigned int vdly_n = decode_hi_lo(plans[std * 2], 7, 0x08, 6);
-		unsigned int vdly_v = decode_hi_lo(plans[std * 2 + 1], 7, 0x08, 6);
+		unsigned int vact_n = decode_hi_lo(plans[std * 2], 6, 0x09, 4);
+		unsigned int vact_v = decode_hi_lo(plans[std * 2 + 1], 6, 0x09, 4);
+		unsigned int vdly_n = decode_hi_lo(plans[std * 2], 6, 0x08, 6);
+		unsigned int vdly_v = decode_hi_lo(plans[std * 2 + 1], 6, 0x08, 6);
 
 		assert(vact_v > vact_n);
 		assert(vdly_v <= vdly_n);
 	}
 	/* PAL captures a taller active region than NTSC in the same mode */
-	assert(decode_hi_lo(plans[2], 7, 0x09, 4) >
-	       decode_hi_lo(plans[0], 7, 0x09, 4));
-	assert(decode_hi_lo(plans[3], 7, 0x09, 4) >
-	       decode_hi_lo(plans[1], 7, 0x09, 4));
-	assert(find_reg(plans[0], 7, 0x09) == 6); /* VACTIVE last, hi/lo pair contiguous */
+	assert(decode_hi_lo(plans[2], 6, 0x09, 4) >
+	       decode_hi_lo(plans[0], 6, 0x09, 4));
+	assert(decode_hi_lo(plans[3], 6, 0x09, 4) >
+	       decode_hi_lo(plans[1], 6, 0x09, 4));
+	assert(find_reg(plans[0], 6, 0x09) == 5); /* VACTIVE last, hi/lo pair contiguous */
 }
 
 int main(void)
@@ -215,6 +231,7 @@ int main(void)
 	test_ntsc_vbi();
 	test_sdt_differs_by_standard();
 	test_plan_overflow();
+	test_black_level_rmw();
 	test_plan_order();
 	test_hactive_pair();
 	test_vertical_geometry_monotonic();

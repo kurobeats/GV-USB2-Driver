@@ -20,6 +20,21 @@ struct tw9910_reg {
 #define TW9910_SDT_NTSC 0x17
 
 /*
+ * BLC (0x0c) black level, applied as a read-modify-write outside the plan: the
+ * vendor driver only touches bit 4 (0 IRE for 625/50, 7.5 IRE for 525/60) and
+ * bit 3, leaving the clamp's other bits as the chip set them. Writing a whole
+ * constant here clobbered those.
+ */
+#define TW9910_BLC_KEEP   0xef
+#define TW9910_BLC_NTSC   0x08
+#define TW9910_BLC_PAL    0x18
+
+static inline unsigned char tw9910_black_level(unsigned char cur, int pal)
+{
+	return (cur & TW9910_BLC_KEEP) | (pal ? TW9910_BLC_PAL : TW9910_BLC_NTSC);
+}
+
+/*
  * Fill `plan` (up to `max` entries) with the register writes needed for the
  * requested standard. Returns the number of entries, or -1 if the plan does
  * not fit. `pal` selects PAL (non-zero) or NTSC (zero); `vbi` selects the
@@ -30,13 +45,11 @@ static inline int tw9910_regplan(int pal, int vbi, struct tw9910_reg *plan,
 {
 	struct tw9910_reg *p = plan;
 
-	if (max < 7)
+	if (max < 6)
 		return -1;
 
 	/* Standard selection first. */
 	*p++ = (struct tw9910_reg){ 0x1c, pal ? TW9910_SDT_PAL : TW9910_SDT_NTSC };
-	/* Input black level: 0 IRE (PAL) or 7.5 IRE (NTSC). */
-	*p++ = (struct tw9910_reg){ 0x0c, pal ? 0xcc : 0xdc };
 	/* HACTIVE (720) + 2, headroom for horizontal shift. */
 	*p++ = (struct tw9910_reg){ 0x0b, 0xd2 };
 	/* HDELAY. */
