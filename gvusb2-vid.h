@@ -29,6 +29,7 @@
 #define GVUSB2_CID_VERTICAL_START	(GVUSB2_CID_BASE + 0)
 #define GVUSB2_CID_HORIZONTAL_START	(GVUSB2_CID_BASE + 1)
 #define GVUSB2_CID_VBI_CAPTURE	(GVUSB2_CID_BASE + 2)
+#define GVUSB2_CID_BLACK_PEDESTAL	(GVUSB2_CID_BASE + 3)
 
 #define GVUSB2_PAL_STANDARD_HEIGHT	576
 #define GVUSB2_NTSC_STANDARD_HEIGHT	486
@@ -68,6 +69,7 @@ struct gvusb2_vid {
 	struct v4l2_ctrl *horizontal_start;
 	struct v4l2_ctrl *vertical_start;
 	struct v4l2_ctrl *vbi_capture;
+	struct v4l2_ctrl *black_pedestal;
 	struct mutex v4l2_lock;
 	unsigned int input_num;
 	unsigned int sequence;

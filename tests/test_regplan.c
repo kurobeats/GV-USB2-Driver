@@ -135,21 +135,23 @@ static void test_plan_overflow(void)
 }
 
 /* Black level is a read-modify-write: only the IRE bit (4) and bit 3 may
- * change, every other clamp bit must survive the write. */
+ * change, every other clamp bit must survive the write. Bit 4 set is the 0 IRE
+ * setting and bit 4 clear the 7.5 IRE one, as measured on hardware. */
 static void test_black_level_rmw(void)
 {
 	static const unsigned char curs[] = { 0x00, 0xff, 0xdd, 0x1f };
 
 	for (unsigned int i = 0; i < sizeof(curs); i++) {
-		unsigned char n = tw9910_black_level(curs[i], 0);
-		unsigned char p = tw9910_black_level(curs[i], 1);
+		unsigned char seven = tw9910_black_level(curs[i], 0);
+		unsigned char zero = tw9910_black_level(curs[i], 1);
 
 		/* bits outside the two the vendor touches are preserved */
-		assert((n & ~0x18) == (curs[i] & ~0x18));
-		assert((p & ~0x18) == (curs[i] & ~0x18));
-		assert(n & 0x08);        /* bit 3 set in both standards */
-		assert(!(n & 0x10));     /* NTSC: 7.5 IRE, bit 4 clear */
-		assert(p & 0x10);        /* PAL: 0 IRE, bit 4 set */
+		assert((seven & ~0x18) == (curs[i] & ~0x18));
+		assert((zero & ~0x18) == (curs[i] & ~0x18));
+		assert(seven & 0x08);      /* bit 3 set either way */
+		assert(zero & 0x08);
+		assert(!(seven & 0x10));   /* 7.5 IRE: bit 4 clear */
+		assert(zero & 0x10);       /* 0 IRE:   bit 4 set  */
 	}
 }
 

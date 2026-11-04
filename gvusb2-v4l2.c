@@ -54,21 +54,42 @@ void get_resolution(struct gvusb2_vid *dev, int *width, int *height)
 	}
 }
 
-void set_tw9910_cropping(struct gvusb2_vid *dev, v4l2_std_id std, int vbi)
+/* Which pedestal to use, resolved from the control and the standard.
+ *
+ * Default follows the standard the way the vendor driver does for its own
+ * market: 625/50 at 0 IRE. NTSC keeps the 7.5 IRE pedestal that US tape and
+ * DVD sources carry; the control lets a user override it (Japanese 525/60
+ * sources are 0 IRE). Measured, not guessed - see tw9910-regplan.h. */
+static int tw9910_zero_ire(struct gvusb2_vid *dev, v4l2_std_id std)
 {
-	struct tw9910_reg plan[7];
-	int i, n, blc;
+	if (dev->black_pedestal && dev->black_pedestal->val)
+		return 0;			/* forced: keep the pedestal */
 
-	dev_warn(&dev->intf->dev, "setting TW9910 %s cropping.\n",
-		 (std & V4L2_STD_625_50) ? "PAL" : "ntsc");
+	return !!(std & V4L2_STD_625_50);
+}
 
-	/* Black level is a read-modify-write so the clamp's other bits survive;
-	 * a failed read just leaves the current level alone. */
+static void apply_black_level(struct gvusb2_vid *dev)
+{
+	int blc;
+
+	/* Read-modify-write so the clamp's other bits survive; a failed read
+	 * just leaves the current level alone. */
 	blc = i2c_smbus_read_byte_data(&dev->i2c_client, 0x0c);
 	if (blc >= 0)
 		i2c_smbus_write_byte_data(&dev->i2c_client, 0x0c,
 			tw9910_black_level((unsigned char)blc,
-				!!(std & V4L2_STD_625_50)));
+				tw9910_zero_ire(dev, dev->standard)));
+}
+
+void set_tw9910_cropping(struct gvusb2_vid *dev, v4l2_std_id std, int vbi)
+{
+	struct tw9910_reg plan[7];
+	int i, n;
+
+	dev_warn(&dev->intf->dev, "setting TW9910 %s cropping.\n",
+		 (std & V4L2_STD_625_50) ? "PAL" : "ntsc");
+
+	apply_black_level(dev);
 
 	/* The fork owns the TW9910: nothing else may write these registers. */
 	n = tw9910_regplan(!!(std & V4L2_STD_625_50), vbi > 0, plan,
@@ -358,6 +379,9 @@ static int gvusb2_s_ctrl(struct v4l2_ctrl *ctrl)
 		gvusb2_write_reg(&dev->gv, 0x0114, ctrl->val + 0xa0);
 		gvusb2_write_reg(&dev->gv, 0x0115, 0x05);
 		break;
+	case GVUSB2_CID_BLACK_PEDESTAL:
+		apply_black_level(dev);
+		break;
 	case GVUSB2_CID_VBI_CAPTURE:
 		if (ctrl->val > 0) {
 			// Disable vertical positioning controls when capturing VBI
@@ -400,6 +424,18 @@ static const struct v4l2_ctrl_config gvusb2_ctrl_horizontal = {
 	.max = 4,
 	.step = 1,
 	.def = 4,
+};
+
+static const struct v4l2_ctrl_config gvusb2_ctrl_pedestal = {
+	.ops = &gvusb2_ctrl_ops,
+	.id = GVUSB2_CID_BLACK_PEDESTAL,
+	.name = "Black Pedestal",
+	.type = V4L2_CTRL_TYPE_BOOLEAN,
+	.flags = V4L2_CTRL_FLAG_SLIDER,
+	.min = 0,
+	.max = 1,
+	.step = 1,
+	.def = 0,
 };
 
 static const struct v4l2_ctrl_config gvusb2_ctrl_vbi = {
@@ -718,6 +754,7 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
 	dev->vertical_start = v4l2_ctrl_new_custom(&dev->ctrl_handler, &gvusb2_ctrl_vertical, NULL);
 	dev->horizontal_start = v4l2_ctrl_new_custom(&dev->ctrl_handler, &gvusb2_ctrl_horizontal, NULL);
 	dev->vbi_capture = v4l2_ctrl_new_custom(&dev->ctrl_handler, &gvusb2_ctrl_vbi, NULL);
+	dev->black_pedestal = v4l2_ctrl_new_custom(&dev->ctrl_handler, &gvusb2_ctrl_pedestal, NULL);
 
 	if (dev->ctrl_handler.error) {
 		ret = dev->ctrl_handler.error;

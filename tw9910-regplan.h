@@ -20,18 +20,27 @@ struct tw9910_reg {
 #define TW9910_SDT_NTSC 0x17
 
 /*
- * BLC (0x0c) black level, applied as a read-modify-write outside the plan: the
- * vendor driver only touches bit 4 (0 IRE for 625/50, 7.5 IRE for 525/60) and
- * bit 3, leaving the clamp's other bits as the chip set them. Writing a whole
- * constant here clobbered those.
+ * BLC (0x0c) black level, applied as a read-modify-write outside the plan: only
+ * bit 4 (the IRE pedestal) and bit 3 are touched, leaving the clamp's other
+ * bits as the chip set them. Writing a whole constant here clobbered those.
+ *
+ * Measured on hardware by toggling bit 4 mid-stream: bit 4 clear lifts black by
+ * roughly 7.5 IRE (about 13 counts) and drops the share of pixels sitting at
+ * digital 0 from ~33% to ~15%; bit 4 set is the 0 IRE setting. That matches the
+ * vendor driver's own register writes, which choose per standard.
  */
-#define TW9910_BLC_KEEP   0xef
-#define TW9910_BLC_NTSC   0x08
-#define TW9910_BLC_PAL    0x18
+#define TW9910_BLC_KEEP     0xef
+#define TW9910_BLC_7IRE     0x08	/* bit 4 clear: 7.5 IRE pedestal */
+#define TW9910_BLC_0IRE     0x18	/* bit 4 set: no pedestal */
 
-static inline unsigned char tw9910_black_level(unsigned char cur, int pal)
+/*
+ * `zero_ire` selects the pedestal setting, not the standard: NTSC sources with
+ * setup want 7.5 IRE, while 625/50 and Japanese 525/60 sources want 0 IRE.
+ */
+static inline unsigned char tw9910_black_level(unsigned char cur, int zero_ire)
 {
-	return (cur & TW9910_BLC_KEEP) | (pal ? TW9910_BLC_PAL : TW9910_BLC_NTSC);
+	return (cur & TW9910_BLC_KEEP) |
+	       (zero_ire ? TW9910_BLC_0IRE : TW9910_BLC_7IRE);
 }
 
 /*

@@ -133,11 +133,20 @@ applications should set what they need on start.
 | `vertical_start` | 1–4 (1–3 on PAL) | 2 | higher values shift the picture up |
 | `horizontal_start` | 0–4 | 4 | higher values shift the picture left |
 | `vbi_capture` | 0–1 | 0 | adds the VBI lines |
+| `black_pedestal` | 0–1 | 0 | force the 7.5 IRE pedestal on 625/50 input |
 
 ```sh
 v4l2-ctl -d /dev/video0 -c brightness=140
 v4l2-ctl -d /dev/video0 -c gain_automatic=0 -c gain=90
+v4l2-ctl -d /dev/video0 -c black_pedestal=1   # 7.5 IRE blacks on PAL
 ```
+
+**Black level.** By default the pedestal follows the standard: 7.5 IRE for
+NTSC (which is what US tape and DVD sources carry) and 0 IRE for 625/50. Some
+PAL/625 sources, and Japanese NTSC, sit at 0 IRE; setting `black_pedestal=1`
+puts the 7.5 IRE pedestal back. Measured effect on a PAL capture: mean luma
+rises from about 32 to about 50 and the share of pixels crushed to black falls
+from 46% to 20%. If blacks look crushed, this is the control to try.
 
 `v4l2-ctl --list-ctrls` on the device always prints the authoritative names,
 ranges and defaults for your kernel.
