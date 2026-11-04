@@ -83,8 +83,13 @@ struct gvusb2_vid {
 
 /* provided by gvusb2-vid.c */
 void gvusb2_release(struct v4l2_device *v4l2_dev);
+void gvusb2_vid_free_urbs(struct gvusb2_vid *dev);
+int gvusb2_vid_allocate_urbs(struct gvusb2_vid *dev);
 int gvusb2_vid_submit_urbs(struct gvusb2_vid *dev);
 void gvusb2_vid_cancel_urbs(struct gvusb2_vid *dev);
+int gvusb2_vid_free(struct gvusb2_vid *dev);
+int gvusb2_vid_probe(struct usb_interface *intf, const struct usb_device_id *id);
+void gvusb2_vid_disconnect(struct usb_interface *intf);
 
 /* provided by gvusb2-v4l2.c */
 void get_resolution(struct gvusb2_vid *dev, int *width, int *height);
