@@ -242,8 +242,13 @@ device actually has audio connected to the RCA inputs. A silent capture at
 about -90 dBFS is a missing source, not a broken driver.
 
 **Video looks wrong after standby or replug** — the driver handles hot-unplug
-and rebind; if a stream misbehaves, stop and restart it, or
-`sudo modprobe -r gvusb2-video gvusb2-sound && sudo modprobe gvusb2-video && sudo modprobe gvusb2-sound`.
+and rebind; if a stream misbehaves, stop and restart it, or reload:
+
+```sh
+sudo modprobe -r gvusb2-video gvusb2-sound
+sudo modprobe gvusb2-video
+sudo modprobe gvusb2-sound index=7
+```
 
 ## Limitations
 
