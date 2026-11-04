@@ -56,7 +56,7 @@ static int feed_field(struct gvusb2_pos *p, uint32_t total, uint32_t chunk,
 static void test_ntsc_field_fits(void)
 {
 	static unsigned char plane[PLANE + GUARD];
-	struct gvusb2_pos p = { 0, 0 };
+	struct gvusb2_pos p = { 0, 0, 0 };
 
 	memset(plane, 0, sizeof(plane));
 	/* 243 source lines occupy the whole 486-line plane. */
@@ -83,7 +83,7 @@ static void test_even_field_fits(void)
 static void test_one_extra_line_overflows(void)
 {
 	static unsigned char plane[PLANE + GUARD];
-	struct gvusb2_pos p = { 0, 0 };
+	struct gvusb2_pos p = { 0, 0, 0 };
 	unsigned int i;
 
 	memset(plane, 0x5a, sizeof(plane));
@@ -100,7 +100,7 @@ static void test_one_extra_line_overflows(void)
  * known state, and the caller writes nothing. */
 static void test_overflow_pins_position(void)
 {
-	struct gvusb2_pos p = { PLANE - 100, 0 };
+	struct gvusb2_pos p = { PLANE - 100, 0, 0 };
 	unsigned int off = 0, len = 0;
 
 	assert(gvusb2_next_run(&p, 4096, BPL, PLANE, &off, &len) == -1);
@@ -108,11 +108,46 @@ static void test_overflow_pins_position(void)
 	assert(off == 0 && len == 0);
 }
 
+/* A complete frame (both fields) reports the whole plane as written. */
+static void test_payload_full_frame(void)
+{
+	static unsigned char plane[PLANE + GUARD];
+	struct gvusb2_pos p = { 0, 0, 0 };
+
+	memset(plane, 0, sizeof(plane));
+
+	/* field A fills the even plane lines from offset 0 */
+	assert(feed_field(&p, LINES_PER_FIELD * BPL, 16384, plane, PLANE) == 0);
+	/* field B starts one plane line in, filling the odd lines */
+	gvusb2_field_start(&p, 1, BPL);
+	assert(feed_field(&p, LINES_PER_FIELD * BPL, 16384, plane, PLANE) == 0);
+
+	assert(gvusb2_payload(&p, PLANE) == PLANE);
+}
+
+/* A truncated field must not claim the full plane: the tail would be stale
+ * bytes from the previous frame. */
+static void test_payload_truncated(void)
+{
+	static unsigned char plane[PLANE + GUARD];
+	struct gvusb2_pos p = { 0, 0, 0 };
+
+	memset(plane, 0, sizeof(plane));
+
+	assert(feed_field(&p, (LINES_PER_FIELD + 1) * BPL, 16384, plane,
+			  PLANE) == -1);
+
+	/* 243 lines fit; the 244th overflows, so 243 lines stay valid. */
+	assert(gvusb2_payload(&p, PLANE) ==
+	       (LINES_PER_FIELD - 1) * 2 * BPL + BPL);
+	assert(gvusb2_payload(&p, PLANE) < PLANE);
+}
+
 /* Chunking must not change the outcome: URB boundaries vary in the wild. */
 static void test_chunking_independent(void)
 {
 	static unsigned char plane_a[PLANE + GUARD], plane_b[PLANE + GUARD];
-	struct gvusb2_pos a = { 0, 0 }, b = { 0, 0 };
+	struct gvusb2_pos a = { 0, 0, 0 }, b = { 0, 0, 0 };
 	uint32_t total = LINES_PER_FIELD * BPL;
 
 	memset(plane_a, 0, sizeof(plane_a));
@@ -132,6 +167,8 @@ int main(void)
 	test_even_field_fits();
 	test_one_extra_line_overflows();
 	test_overflow_pins_position();
+	test_payload_full_frame();
+	test_payload_truncated();
 	test_chunking_independent();
 	printf("test_assemble: all tests passed\n");
 	return 0;

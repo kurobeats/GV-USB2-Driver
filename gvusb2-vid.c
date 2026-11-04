@@ -59,7 +59,7 @@ void gvusb2_vid_copy_video(struct gvusb2_vid *dev, u8 *buf, int len)
 	u8 *buffer_addr;
 	int width;
 	struct gvusb2_vb *vb = dev->current_buf;
-	struct gvusb2_pos pos = { vb->buf_pos, vb->line_pos };
+	struct gvusb2_pos pos = { vb->buf_pos, vb->line_pos, vb->written };
 	int ret;
 
 	get_resolution(dev, &width, 0);
@@ -87,16 +87,19 @@ void gvusb2_vid_copy_video(struct gvusb2_vid *dev, u8 *buf, int len)
 
 	vb->buf_pos = pos.buf_pos;
 	vb->line_pos = pos.line_pos;
+	vb->written = pos.written;
 }
 
 static inline void gvusb2_vid_submit_video_buffer(struct gvusb2_vid *dev)
 {
 	struct gvusb2_vb *vb = dev->current_buf;
 
-	/* submit buffer */
-	/* TODO: Do we set this even if it's too small? */
+	/* submit buffer. A field that overflowed was truncated, so report the
+	 * bytes actually written: claiming the full plane would expose stale
+	 * rows from the previous frame. */
 	vb2_set_plane_payload(&vb->vb.vb2_buf, 0,
-		vb->vb.vb2_buf.planes[0].length);
+		vb->written < (int)vb->vb.vb2_buf.planes[0].length ?
+		vb->written : (int)vb->vb.vb2_buf.planes[0].length);
 
 	vb->vb.sequence = dev->sequence++;
 	vb->vb.field = V4L2_FIELD_INTERLACED;

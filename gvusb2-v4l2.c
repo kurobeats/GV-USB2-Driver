@@ -211,6 +211,7 @@ static void gvusb2_vb2_buf_queue(struct vb2_buffer *vb)
 
 	gvusb2_vbuf->buf_pos = 0;
 	gvusb2_vbuf->line_pos = 0;
+	gvusb2_vbuf->written = 0;
 	gvusb2_vbuf->field = 0;
 	list_add_tail(&gvusb2_vbuf->list, &dev->buf_list);
 

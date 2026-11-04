@@ -12,6 +12,7 @@
 struct gvusb2_pos {
 	unsigned int buf_pos;
 	unsigned int line_pos;
+	unsigned int written;	/* highest plane offset written + 1 */
 };
 
 /*
@@ -49,6 +50,9 @@ static inline int gvusb2_next_run(struct gvusb2_pos *p, unsigned int remaining,
 static inline void gvusb2_advance(struct gvusb2_pos *p, unsigned int run,
 				 unsigned int bytes_per_line)
 {
+	if (p->buf_pos + run > p->written)
+		p->written = p->buf_pos + run;
+
 	p->buf_pos += run;
 	p->line_pos += run;
 
@@ -65,6 +69,14 @@ static inline void gvusb2_field_start(struct gvusb2_pos *p, int even,
 {
 	p->buf_pos = even ? bytes_per_line : 0;
 	p->line_pos = 0;
+}
+
+/* Bytes actually written, clamped to the plane. Truncated fields must not be
+ * reported as complete, or the tail is stale data from the previous frame. */
+static inline unsigned int gvusb2_payload(const struct gvusb2_pos *p,
+					  unsigned int buffer_len)
+{
+	return p->written < buffer_len ? p->written : buffer_len;
 }
 
 /* Plane bytes a field of `lines` source lines occupies. */

@@ -41,6 +41,7 @@ struct gvusb2_vb {
 	struct list_head list;
 	int buf_pos;
 	int line_pos;
+	int written;	/* highest plane offset written + 1 */
 	int field;
 };
 
