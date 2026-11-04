@@ -23,6 +23,7 @@
 
 #include "gvusb2-vid.h"
 #include "gvusb2.h"
+#include "tw9910-regplan.h"
 
 /*****************************************************************************
  * Helper functions
@@ -53,60 +54,24 @@ void get_resolution(struct gvusb2_vid *dev, int *width, int *height)
 	}
 }
 
-void set_tw9910_cropping(struct gvusb2_vid *dev, v4l2_std_id std, int vbi) {
-	if (std & V4L2_STD_625_50) {
-		// Set input black level to 0 IRE for PAL
-		i2c_smbus_write_byte_data(&dev->i2c_client, 0x0c, 0xcc);
-		// HACTIVE (720) + 2 so the user can do some horizontal shifting if they want
-		i2c_smbus_write_byte_data(&dev->i2c_client, 0x0b, 0xd2);
-		// HDELAY
-		i2c_smbus_write_byte_data(&dev->i2c_client, 0x0a, 0x0d);
-		if (vbi > 0) {
-			dev_warn(&dev->intf->dev,
-					 "setting TW9910 PAL vbi cropping.\n");
-			// VDELAY
-			i2c_smbus_write_byte_data(&dev->i2c_client, 0x08, 0x02);
-			// VACTIVE (624)
-			i2c_smbus_write_byte_data(&dev->i2c_client, 0x07, 0x12);
-			i2c_smbus_write_byte_data(&dev->i2c_client, 0x09, 0x37);
-		} else {
-			dev_warn(&dev->intf->dev,
-					 "setting TW9910 PAL normal cropping.\n");
-			// VDELAY
-			i2c_smbus_write_byte_data(&dev->i2c_client, 0x08, 0x17);
-			// VACTIVE (576)
-			i2c_smbus_write_byte_data(&dev->i2c_client, 0x07, 0x12);
-			i2c_smbus_write_byte_data(&dev->i2c_client, 0x09, 0x22);
-		}
-	} else {
-		// Set input black level to 7.5 IRE for NTSC
-		i2c_smbus_write_byte_data(&dev->i2c_client, 0x0c, 0xdc);
-		// HACTIVE (720) + 2 so the user can do some horizontal shifting if they want
-		i2c_smbus_write_byte_data(&dev->i2c_client, 0x0b, 0xd2);
-		// HDELAY (16 samples according to ITU-R 656)
-		i2c_smbus_write_byte_data(&dev->i2c_client, 0x0a, 0x10);
-		if (vbi > 0) {
-			dev_warn(&dev->intf->dev,
-					 "setting TW9910 ntsc vbi cropping.\n");
-			// VDELAY
-			i2c_smbus_write_byte_data(&dev->i2c_client, 0x08, 0x02);
-			// VACTIVE (524)
-			i2c_smbus_write_byte_data(&dev->i2c_client, 0x07, 0x12);
-			i2c_smbus_write_byte_data(&dev->i2c_client, 0x09, 0x05);
-		} else {
-			dev_warn(&dev->intf->dev,
-					 "setting TW9910 ntsc normal cropping.\n");
-			// VDELAY
-			i2c_smbus_write_byte_data(&dev->i2c_client, 0x08, 0x13);
-			// VACTIVE (488)
-			i2c_smbus_write_byte_data(&dev->i2c_client, 0x07, 0x02);
-			i2c_smbus_write_byte_data(&dev->i2c_client, 0x09, 0xf4);
-		}
-	}
+void set_tw9910_cropping(struct gvusb2_vid *dev, v4l2_std_id std, int vbi)
+{
+	struct tw9910_reg plan[7];
+	int i, n;
 
+	dev_warn(&dev->intf->dev, "setting TW9910 %s cropping.\n",
+		 (std & V4L2_STD_625_50) ? "PAL" : "ntsc");
 
+	/* The fork owns the TW9910: nothing else may write these registers. */
+	n = tw9910_regplan(!!(std & V4L2_STD_625_50), vbi > 0, plan,
+			   ARRAY_SIZE(plan));
+	if (n < 0)
+		return;
+
+	for (i = 0; i < n; i++)
+		i2c_smbus_write_byte_data(&dev->i2c_client, plan[i].reg,
+					  plan[i].val);
 }
-
 
 void set_stk1150_cropping(struct gvusb2_vid *dev, v4l2_std_id std, int vbi, int horizontal_start, int vertical_start) {
 	if (vbi > 0) {
@@ -552,8 +517,6 @@ static int gvusb2_vidioc_s_std(struct file *file, void *priv, v4l2_std_id std)
 	set_tw9910_cropping(dev, std, v4l2_ctrl_g_ctrl(dev->vbi_capture));
 	set_stk1150_cropping(dev, std, v4l2_ctrl_g_ctrl(dev->vbi_capture), v4l2_ctrl_g_ctrl(dev->horizontal_start), v4l2_ctrl_g_ctrl(dev->vertical_start));
 
-	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_std, std);
-
 	return 0;
 }
 
@@ -797,10 +760,6 @@ int gvusb2_video_register(struct gvusb2_vid *dev)
 	dev->standard = V4L2_STD_NTSC_M;
 	// Reset all controls again after setting standard to make sure cropping values get set
 	//v4l2_ctrl_handler_setup(&dev->ctrl_handler);
-
-	/* set standard for sub-devices */
-	v4l2_device_call_all(&dev->v4l2_dev, 0, video, s_std,
-		dev->standard);
 
 	video_set_drvdata(&dev->vdev, dev);
 	ret = video_register_device(&dev->vdev, VFL_TYPE_VIDEO, -1);
