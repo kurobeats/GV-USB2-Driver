@@ -31,6 +31,11 @@ static int gvusb2_i2c_busy_wait(struct gvusb2_vid *dev, u8 wait_mask)
 			return 0;
 	}
 
+	/* Abort the stuck transaction. The vendor driver writes 0x80 to the
+	 * command register whenever the poll gives up, which clears the engine
+	 * so the next access does not see a stale completion. */
+	gvusb2_write_reg(&dev->gv, 0x0200, 0x80);
+
 	return -ETIMEDOUT;
 }
 

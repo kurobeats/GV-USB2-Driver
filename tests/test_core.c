@@ -263,6 +263,10 @@ static void test_i2c_busy_wait_stuck(void)
 
 	ret = gvusb2_i2c_read_reg(dev, 0x44, 0x1c, &(u8){ 0 });
 	assert(ret == -ETIMEDOUT);
+
+	/* A stuck transaction must be aborted, as the vendor driver does, or the
+	 * engine stays wedged and every later access sees a stale completion. */
+	assert(utk_regs[0x0200] == 0x80);
 }
 
 /* BUG: the busy wait also ignored register read errors; a failed USB status
