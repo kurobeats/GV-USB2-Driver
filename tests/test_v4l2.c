@@ -1309,6 +1309,24 @@ static void test_ctrl_autogain_rmw(void)
 	}
 }
 
+/* BUG: a failed read left `reg_06` holding the errno truncated to u8 and the
+ * driver wrote that garbage to the chip's mode register. A failed read must
+ * leave the register alone and report the error. */
+static void test_ctrl_autogain_read_failure(void)
+{
+	int ret;
+
+	utk_reset();
+	utk_chip[0x06] = 0x52;
+	utk_fail_i2c_read = 1;
+
+	ret = utk_ctrl(&utk_d.scratch, V4L2_CID_AUTOGAIN, 1);
+
+	assert(utk_count(EV_I2C_WRITE, 0x06, UTK_ANY) == 0);
+	assert(utk_chip[0x06] == 0x52);
+	assert(ret < 0);
+}
+
 /* An unknown control id is not an error and touches no hardware. */
 static void test_ctrl_unknown_id(void)
 {
@@ -1812,6 +1830,7 @@ int main(void)
 	test_ctrl_brightness_hue();
 	test_ctrl_direct_registers();
 	test_ctrl_autogain_rmw();
+	test_ctrl_autogain_read_failure();
 	test_ctrl_unknown_id();
 	test_vbi_control_flags();
 
