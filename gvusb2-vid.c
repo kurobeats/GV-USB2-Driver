@@ -72,12 +72,15 @@ void gvusb2_vid_copy_video(struct gvusb2_vid *dev, u8 *buf, int len)
 			len_to_copy = bytes_left_in_line;
 
 		if (vb->buf_pos + len_to_copy > buffer_len) {
-			dev_warn(&dev->intf->dev,
-				"buffer overflow detected.\n");
+			dev_warn_ratelimited(&dev->intf->dev,
+				"buffer overflow detected, truncating field.\n");
 
-			/* this seems to break it somehow? */
-//            memcpy(vb2_plane_vaddr(&vb->vb.vb2_buf, 0) + vb->buf_pos,
-//                        buf, vb->vb.vb2_buf.planes[0].length - vb->buf_pos);
+			/* Pin to the end of the plane: keeps the buffer in a
+			 * well-defined state so the field still gets submitted
+			 * instead of being dropped (drops showed up as ~25fps
+			 * instead of 29.97).
+			 */
+			vb->buf_pos = buffer_len;
 			return;
 		}
 

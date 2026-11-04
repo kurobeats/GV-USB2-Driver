@@ -451,10 +451,10 @@ static int gvusb2_vidioc_enum_input(struct file *file, void *priv,
 
 	switch (i->index) {
 	case GVUSB2_INPUT_COMPOSITE:
-		strncpy(i->name, "Composite", sizeof(i->name));
+		strscpy(i->name, "Composite", sizeof(i->name));
 		break;
 	case GVUSB2_INPUT_SVIDEO:
-		strncpy(i->name, "S-Video", sizeof(i->name));
+		strscpy(i->name, "S-Video", sizeof(i->name));
 		break;
 	default:
 		return -EINVAL;
