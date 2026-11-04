@@ -712,6 +712,51 @@ static void test_isoc_irq_ignores_cancelled_urbs(void)
 	vid_free(dev);
 }
 
+/* A transient bus error is not the end of the stream. The HCD reports -EPROTO
+ * or -EXDEV on an isochronous endpoint when it could not transfer the packets,
+ * and only the shutdown codes above mean "stop". Dropping the URB here instead
+ * of resubmitting it leaves the capture frozen with no error reported to
+ * userspace: nothing else ever submits those URBs again. */
+static void test_isoc_irq_resubmits_after_bus_error(void)
+{
+	static const int statuses[] = { -EPROTO, -EXDEV, -ETIME };
+	struct gvusb2_vid *dev = vid_new();
+	struct utk_plane p;
+	unsigned int k;
+
+	for (k = 0; k < ARRAY_SIZE(statuses); k++) {
+		u8 *tbuf;
+		struct urb *urb = isoc_new(2, &tbuf);
+
+		utkvid_reset();
+		plane_new(&p, PLANE);
+		dev->current_buf = p.vb;
+		dev->counter = 3;
+		urb->context = dev;
+		urb->status = statuses[k];
+		urb->iso_frame_desc[0].actual_length = 64;
+		urb->iso_frame_desc[0].status = 0;
+		tbuf[0] = 0x00;
+		tbuf[1] = dev->counter;
+		memset(tbuf + 4, 0x77, 60);
+
+		gvusb2_vid_isoc_irq(urb);
+
+		assert(utkvid.submit_calls == 1);
+		assert(utkvid.submitted[0] == urb);
+		/* the packets of an errored URB are not trusted, but the next
+		 * round starts clean */
+		assert(p.vb->written == 0);
+		assert(dev->counter == 3);
+		assert(urb->iso_frame_desc[0].status == 0);
+		assert(urb->iso_frame_desc[0].actual_length == 0);
+
+		plane_free(&p);
+		isoc_free(urb, tbuf);
+	}
+	vid_free(dev);
+}
+
 /* The completion handler consumes the packets, clears the descriptors for the
  * next round and resubmits the same URB. A packet the HCD flagged is skipped. */
 static void test_isoc_irq_processes_then_resubmits(void)
@@ -1209,6 +1254,7 @@ int main(void)
 	test_data_desync_restarts_field();
 	test_data_counter_wraps();
 	test_isoc_irq_ignores_cancelled_urbs();
+	test_isoc_irq_resubmits_after_bus_error();
 	test_isoc_irq_processes_then_resubmits();
 	test_check_altsetting_rules();
 	test_probe_rejects_other_interfaces();

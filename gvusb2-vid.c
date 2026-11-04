@@ -210,18 +210,21 @@ static void gvusb2_vid_isoc_irq(struct urb *urb)
 
 	switch (urb->status) {
 	case 0:
+		gvusb2_vid_process_isoc(dev, urb);
 		break;
 	case -ECONNRESET:
 	case -ENOENT:
 	case -ESHUTDOWN:
 		return;
 	default:
+		/* A transient error is not the end of the stream. The HCD reports
+		 * -EPROTO/-EXDEV when it could not transfer the packets; returning
+		 * here would leave the capture frozen with nothing resubmitting
+		 * these URBs and no error reported to userspace. */
 		gvusb2_dbg(&dev->intf->dev,
 			"urb error! status %d\n", urb->status);
-		return;
+		break;
 	}
-
-	gvusb2_vid_process_isoc(dev, urb);
 
 	for (i = 0; i < urb->number_of_packets; i++) {
 		urb->iso_frame_desc[i].status = 0;
