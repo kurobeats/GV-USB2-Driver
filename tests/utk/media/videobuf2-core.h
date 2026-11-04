@@ -6,4 +6,10 @@
 
 struct vb2_queue { int unused; };
 
+enum vb2_buffer_state {
+	VB2_BUF_STATE_ERROR = 0,
+	VB2_BUF_STATE_QUEUED,
+	VB2_BUF_STATE_DONE,
+};
+
 #endif

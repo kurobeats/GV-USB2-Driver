@@ -6,6 +6,7 @@
 
 struct usb_device { int unused; };
 struct usb_interface { struct device dev; };
+struct usb_device_id { int unused; };
 
 #define USB_DIR_IN      0x80
 #define USB_DIR_OUT     0x00
