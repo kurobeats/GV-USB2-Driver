@@ -519,6 +519,7 @@ static int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_
 	struct gvusb2_snd *dev;
 	int i, ret;
 	struct usb_endpoint_descriptor *audio_ep = NULL;
+	u8 iface_num = 0, alt_setting = 0;
 
 	udev = interface_to_usbdev(intf);
 
@@ -529,7 +530,8 @@ static int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_
 	if (intf->altsetting[0].desc.bInterfaceClass == USB_CLASS_AUDIO)
 		return -ENODEV;
 
-	/* check if we're on the audio interface */
+	/* check if we're on the audio interface, and remember which alternate
+	 * setting carries the isochronous endpoint */
 	for (i = 0; i < intf->num_altsetting; i++) {
 		int ep;
 		int num_endpoints = intf->altsetting[i].desc.bNumEndpoints;
@@ -542,6 +544,8 @@ static int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_
 					usb_endpoint_xfer_isoc(e) &&
 					e->wMaxPacketSize == 0x100) {
 				audio_ep = e;
+				iface_num = intf->altsetting[i].desc.bInterfaceNumber;
+				alt_setting = intf->altsetting[i].desc.bAlternateSetting;
 				gvusb2_dbg(&intf->dev, "found audio at altsetting %d endpoint %d\n",
 					i, ep);
 			}
@@ -562,11 +566,9 @@ static int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_
 	if (ret < 0)
 		goto free_dev;
 
-	/* select the audio interface; use the descriptors the endpoint scan
+	/* select the audio interface; use the altsetting the endpoint scan
 	 * matched rather than hardcoded interface/alternate numbers */
-	ret = usb_set_interface(udev,
-		intf->altsetting[0].desc.bInterfaceNumber,
-		intf->altsetting[0].desc.bAlternateSetting);
+	ret = usb_set_interface(udev, iface_num, alt_setting);
 	if (ret < 0)
 		goto free_gvusb2;
 
