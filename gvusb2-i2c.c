@@ -169,11 +169,7 @@ int gvusb2_i2c_register(struct gvusb2_vid *dev)
 	adap->algo = &gvusb2_i2c_algo;
 	adap->dev.parent = &dev->intf->dev;
 	strscpy(adap->name, "gvusb2", sizeof(adap->name));
-	/* maybe set this to just dev? */
 	adap->algo_data = dev;
-
-	/* is this needed? */
-	//i2c_set_adapdata(adap, &dev->v4l2_dev);
 
 	ret = i2c_add_adapter(adap);
 	if (ret < 0)

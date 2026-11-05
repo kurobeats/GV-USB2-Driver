@@ -23,7 +23,6 @@
 
 #define GVUSB2_INPUT_COMPOSITE 0
 #define GVUSB2_INPUT_SVIDEO    1
-#define GVUSB2_INPUT_MAX_VAL   1
 
 #define GVUSB2_CID_BASE			(V4L2_CID_USER_BASE | 0xf000)
 #define GVUSB2_CID_VERTICAL_START	(GVUSB2_CID_BASE + 0)
@@ -52,7 +51,6 @@ struct gvusb2_vid {
 
 	/* usb data */
 	struct usb_interface *intf;
-	struct usb_endpoint_descriptor *ep;
 	struct urb *urbs[GVUSB2_NUM_URBS];
 	/* keeps track of packet seq */
 	unsigned char counter;

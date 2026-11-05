@@ -102,6 +102,33 @@ void set_tw9910_cropping(struct gvusb2_vid *dev, v4l2_std_id std, int vbi)
 					  plan[i].val);
 }
 
+/* The active video window on the STK1150: one write set for the vertical
+ * crop (shared by the V4L2 controls and set_stk1150_cropping) ... */
+static void set_vertical_window(struct gvusb2_vid *dev, v4l2_std_id std,
+	int vertical_start)
+{
+	gvusb2_write_reg(&dev->gv, 0x0112, vertical_start);
+	gvusb2_write_reg(&dev->gv, 0x0113, 0);
+	// number of active lines: NTSC (480) vs PAL (576)
+	if (std & V4L2_STD_625_50) {
+		gvusb2_write_reg(&dev->gv, 0x0116, vertical_start + 0x20);
+		gvusb2_write_reg(&dev->gv, 0x0117, 0x01);
+	} else {
+		gvusb2_write_reg(&dev->gv, 0x0116, vertical_start + 0xf3);
+		gvusb2_write_reg(&dev->gv, 0x0117, 0x00);
+	}
+}
+
+/* ... and one for the horizontal crop, always the same whether NTSC or PAL,
+ * whether VBI or not */
+static void set_horizontal_window(struct gvusb2_vid *dev, int horizontal_start)
+{
+	gvusb2_write_reg(&dev->gv, 0x0110, horizontal_start);
+	gvusb2_write_reg(&dev->gv, 0x0111, 0);
+	gvusb2_write_reg(&dev->gv, 0x0114, horizontal_start + 0xa0);
+	gvusb2_write_reg(&dev->gv, 0x0115, 0x05);
+}
+
 void set_stk1150_cropping(struct gvusb2_vid *dev, v4l2_std_id std, int vbi, int horizontal_start, int vertical_start) {
 	if (vbi > 0) {
 		// VBI option is set, so we need to adjust cropping to include the area above active video
@@ -116,22 +143,10 @@ void set_stk1150_cropping(struct gvusb2_vid *dev, v4l2_std_id std, int vbi, int 
 		}
 	} else {
 		// Use the horizontal and vertical V4L2 controls when vbi is not enabled
-		gvusb2_write_reg(&dev->gv, 0x0112, vertical_start);
-		gvusb2_write_reg(&dev->gv, 0x0113, 0);
-		if (std & V4L2_STD_625_50) {
-			gvusb2_write_reg(&dev->gv, 0x0116, vertical_start + 0x20);
-			gvusb2_write_reg(&dev->gv, 0x0117, 0x01);
-		} else {
-			gvusb2_write_reg(&dev->gv, 0x0116, vertical_start + 0xf3);
-			gvusb2_write_reg(&dev->gv, 0x0117, 0x00);
-		}
+		set_vertical_window(dev, std, vertical_start);
 	}
 
-	// Horizontal is always the same whether NTSC or PAL, whether VBI or not
-	gvusb2_write_reg(&dev->gv, 0x0110, horizontal_start);
-	gvusb2_write_reg(&dev->gv, 0x0111, 0);
-	gvusb2_write_reg(&dev->gv, 0x0114, horizontal_start + 0xa0);
-	gvusb2_write_reg(&dev->gv, 0x0115, 0x05);
+	set_horizontal_window(dev, horizontal_start);
 }
 
 void gvusb2_vid_clear_queue(struct gvusb2_vid *dev,
@@ -261,9 +276,9 @@ static void gvusb2_vb2_stop_streaming(struct vb2_queue *vb2q)
 {
 	struct gvusb2_vid *dev = vb2_get_drv_priv(vb2q);
 
-	/* start mutex */
-	if (mutex_lock_interruptible(&dev->v4l2_lock))
-		return;
+	/* this path cannot abandon its work: an interrupted lock here would
+	 * leave the URBs writing into buffers vb2 is about to free */
+	mutex_lock(&dev->v4l2_lock);
 
 	/* cancel urbs */
 	gvusb2_vid_cancel_urbs(dev);
@@ -369,22 +384,10 @@ static int gvusb2_s_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 	}
 	case GVUSB2_CID_VERTICAL_START:
-		gvusb2_write_reg(&dev->gv, 0x0112, ctrl->val);
-		gvusb2_write_reg(&dev->gv, 0x0113, 0);
-		// Let's set the number of active lines correctly for NTSC (480) vs PAL (576)
-		if (dev->standard & V4L2_STD_625_50) {
-			gvusb2_write_reg(&dev->gv, 0x0116, ctrl->val + 0x20);
-			gvusb2_write_reg(&dev->gv, 0x0117, 0x01);
-		} else {
-			gvusb2_write_reg(&dev->gv, 0x0116, ctrl->val + 0xf3);
-			gvusb2_write_reg(&dev->gv, 0x0117, 0x00);
-		}
+		set_vertical_window(dev, dev->standard, ctrl->val);
 		break;
 	case GVUSB2_CID_HORIZONTAL_START:
-		gvusb2_write_reg(&dev->gv, 0x0110, ctrl->val);
-		gvusb2_write_reg(&dev->gv, 0x0111, 0);
-		gvusb2_write_reg(&dev->gv, 0x0114, ctrl->val + 0xa0);
-		gvusb2_write_reg(&dev->gv, 0x0115, 0x05);
+		set_horizontal_window(dev, ctrl->val);
 		break;
 	case GVUSB2_CID_BLACK_PEDESTAL:
 		apply_black_level(dev);
@@ -596,10 +599,11 @@ static int gvusb2_vidioc_enum_fmt_vid_cap(struct file *file, void *priv,
 	return 0;
 }
 
-static int gvusb2_vidioc_g_fmt_vid_cap(struct file *file, void *priv,
+/* Format negotiation is fixed-resolution: whatever userspace asks for is
+ * coerced to the geometry the decoder currently captures. */
+static void gvusb2_vidioc_fix_format(struct gvusb2_vid *dev,
 	struct v4l2_format *f)
 {
-	struct gvusb2_vid *dev = video_drvdata(file);
 	int width, height;
 
 	get_resolution(dev, &width, &height);
@@ -610,6 +614,14 @@ static int gvusb2_vidioc_g_fmt_vid_cap(struct file *file, void *priv,
 	f->fmt.pix.bytesperline = width * 2;
 	f->fmt.pix.sizeimage = height * width * 2;
 	f->fmt.pix.colorspace = V4L2_COLORSPACE_SMPTE170M;
+}
+
+static int gvusb2_vidioc_g_fmt_vid_cap(struct file *file, void *priv,
+	struct v4l2_format *f)
+{
+	struct gvusb2_vid *dev = video_drvdata(file);
+
+	gvusb2_vidioc_fix_format(dev, f);
 
 	return 0;
 }
@@ -619,19 +631,11 @@ static int gvusb2_vidioc_s_fmt_vid_cap(struct file *file, void *priv,
 {
 	struct gvusb2_vid *dev = video_drvdata(file);
 	struct vb2_queue *vb2q = &dev->vb2q;
-	int width, height;
 
 	if (vb2_is_busy(vb2q))
 		return -EBUSY;
 
-	get_resolution(dev, &width, &height);
-	f->fmt.pix.width = width;
-	f->fmt.pix.height = height;
-	f->fmt.pix.field = V4L2_FIELD_INTERLACED;
-	f->fmt.pix.pixelformat = V4L2_PIX_FMT_UYVY;
-	f->fmt.pix.bytesperline = width * 2;
-	f->fmt.pix.sizeimage = height * width * 2;
-	f->fmt.pix.colorspace = V4L2_COLORSPACE_SMPTE170M;
+	gvusb2_vidioc_fix_format(dev, f);
 
 	return 0;
 }
@@ -640,16 +644,8 @@ static int gvusb2_vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 	struct v4l2_format *f)
 {
 	struct gvusb2_vid *dev = video_drvdata(file);
-	int width, height;
 
-	get_resolution(dev, &width, &height);
-	f->fmt.pix.width = width;
-	f->fmt.pix.height = height;
-	f->fmt.pix.field = V4L2_FIELD_INTERLACED;
-	f->fmt.pix.pixelformat = V4L2_PIX_FMT_UYVY;
-	f->fmt.pix.bytesperline = width * 2;
-	f->fmt.pix.sizeimage = height * width * 2;
-	f->fmt.pix.colorspace = V4L2_COLORSPACE_SMPTE170M;
+	gvusb2_vidioc_fix_format(dev, f);
 
 	return 0;
 }
@@ -701,12 +697,9 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
 			{0x06, 0x00},
 			{0x03, 0xa2},
 			{0x05, 0x01},
-			//{0x08, 0x12},
-			//{0x09, 0xf4},
 			{0x19, 0xde},
 			{0x1a, 0x0a}, // enable anti-aliasing filters but disable power-saving mode
 			{0x1b, 0x00},
-			//{0x1c, 0x0f},
 			/* Vendor-tuned fixed-point/colour defaults, read off the Windows
 			 * driver's TW9910 init. The upstream list had these commented
 			 * out (0x28/0x2f/0x6b-0x6d) or missing entirely; without them the
@@ -715,7 +708,6 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
 			{0x28, 0x0e},
 			{0x29, 0x03},
 			{0x2d, 0x07},
-			//{0x2e, 0xa5},
 			{0x2f, 0x06},
 			{0x4c, 0x0d},
 			{0x55, 0x00},
@@ -778,6 +770,14 @@ int gvusb2_v4l2_register(struct gvusb2_vid *dev)
 	/* load tw9910 driver */
 	dev->sd_tw9910 = v4l2_i2c_new_subdev_board(&dev->v4l2_dev, &dev->adap,
 		&gvusb2_tw9910_i2c_board_info, 0);
+	/* Without the decoder STREAMON would only start the STK1150: no s_stream
+	 * ever reaches the chip and capture would sit black. Fail the probe
+	 * instead (the v4l2 release callback is already armed; do NOT call
+	 * v4l2_device_unregister here or it would double-free via that callback). */
+	if (dev->sd_tw9910 == NULL) {
+		ret = -ENODEV;
+		goto free_ctrl_handler;
+	}
 
 	/* init tw9910 */
 	for (i = 0; phase6[i].reg != 0xff; i++)

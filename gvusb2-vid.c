@@ -364,14 +364,6 @@ static void gvusb2_stk1150_init_inner(struct gvusb2_vid *dev)
 		{0x0300, 0x80},
 		{0x0018, 0x10},
 		{0x0103, 0x00},
-		//{0x0110, 0x03},
-		//{0x0111, 0x00},
-		//{0x0112, 0x02},
-		//{0x0113, 0x00},
-		//{0x0114, 0xa3},
-		//{0x0115, 0x05},
-		//{0x0116, 0xf2},
-		//{0x0117, 0x00},
 		{0x0100, 0x33},
 		{0x0202, 0x08},
 
@@ -450,10 +442,13 @@ void gvusb2_release(struct v4l2_device *v4l2_dev)
 	struct gvusb2_vid *dev =
 		container_of(v4l2_dev, struct gvusb2_vid, v4l2_dev);
 
-	gvusb2_i2c_unregister(dev);
-
-	v4l2_ctrl_handler_free(&dev->ctrl_handler);
+	/* unregister the v4l2 layer first: its subdev list references clients
+	 * bound to the i2c adapter, and i2c_del_adapter() would free those
+	 * clients out from under v4l2_device_unregister(). */
 	v4l2_device_unregister(&dev->v4l2_dev);
+	v4l2_ctrl_handler_free(&dev->ctrl_handler);
+
+	gvusb2_i2c_unregister(dev);
 
 	mutex_destroy(&dev->v4l2_lock);
 	mutex_destroy(&dev->vb2q_lock);
@@ -467,14 +462,19 @@ int gvusb2_vid_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	struct gvusb2_vid *dev;
 	int i, ret;
 	struct usb_endpoint_descriptor *video_ep = NULL;
+	u8 iface_num = 0, alt_setting = 0;
 
 	udev = interface_to_usbdev(intf);
 
-	/* check if we're on the video interface */
+	/* check if we're on the video interface, and remember which alternate
+	 * setting carries the isochronous endpoint */
 	for (i = 0; i < intf->num_altsetting; i++) {
 		gvusb2_vid_check_altsetting(intf, i, &video_ep);
-		if (video_ep != NULL)
+		if (video_ep != NULL) {
+			iface_num = intf->altsetting[i].desc.bInterfaceNumber;
+			alt_setting = intf->altsetting[i].desc.bAlternateSetting;
 			break;
+		}
 	}
 
 	/* if we don't have a video device, we don't accept */
@@ -491,13 +491,12 @@ int gvusb2_vid_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	if (ret < 0)
 		goto free_dev;
 
-	/* XXX: No hardcoding here. */
-	ret = usb_set_interface(udev, 0, 5);
+	/* select the altsetting the scan found the video endpoint in */
+	ret = usb_set_interface(udev, iface_num, alt_setting);
 	if (ret < 0)
 		goto free_gvusb2;
 
 	/* initialize gvusb2_vid data */
-	dev->ep = video_ep;
 	dev->intf = intf;
 
 	/* initialize the stk1150 in the gvusb2 */

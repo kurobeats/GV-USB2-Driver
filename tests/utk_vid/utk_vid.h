@@ -68,6 +68,8 @@ struct usb_host_endpoint {
 
 struct usb_interface_descriptor {
 	u8 bNumEndpoints;
+	u8 bInterfaceNumber;
+	u8 bAlternateSetting;
 };
 
 struct usb_host_interface {
@@ -250,6 +252,7 @@ struct utkvid_fake {
 	unsigned int kills_at_first_free;
 	unsigned int set_interface_calls;
 	unsigned int set_interface_alt;
+	unsigned int set_interface_ifnum;
 	int set_interface_err;
 
 	/* video bookkeeping */
@@ -269,6 +272,7 @@ struct utkvid_fake {
 	int gv_init_err;
 	unsigned int i2c_register_calls;
 	unsigned int i2c_unregister_calls;
+	unsigned int i2c_unregister_seq;
 	unsigned int vb2_setup_calls;
 	unsigned int v4l2_register_calls;
 	unsigned int v4l2_unregister_calls;
@@ -276,7 +280,10 @@ struct utkvid_fake {
 	unsigned int clear_queue_calls;
 	unsigned int clear_queue_state;
 	unsigned int ctrl_handler_free_calls;
+	unsigned int ctrl_handler_free_seq;
 	unsigned int v4l2_device_unregister_calls;
+	unsigned int v4l2_device_unregister_seq;
+	unsigned int utk_seq;
 	unsigned int v4l2_device_disconnect_calls;
 	unsigned int v4l2_device_put_calls;
 	int i2c_register_err;
@@ -390,9 +397,9 @@ static inline unsigned int usb_rcvisocpipe(struct usb_device *udev, int ep)
 static inline int usb_set_interface(struct usb_device *udev, int ifnum, int alt)
 {
 	(void)udev;
-	(void)ifnum;
 	utkvid.set_interface_calls++;
 	utkvid.set_interface_alt = (unsigned int)alt;
+	utkvid.set_interface_ifnum = (unsigned int)ifnum;
 	return utkvid.set_interface_err;
 }
 
@@ -462,12 +469,14 @@ static inline void v4l2_device_unregister(struct v4l2_device *v4l2_dev)
 {
 	(void)v4l2_dev;
 	utkvid.v4l2_device_unregister_calls++;
+	utkvid.v4l2_device_unregister_seq = ++utkvid.utk_seq;
 }
 
 static inline void v4l2_ctrl_handler_free(struct v4l2_ctrl_handler *h)
 {
 	(void)h;
 	utkvid.ctrl_handler_free_calls++;
+	utkvid.ctrl_handler_free_seq = ++utkvid.utk_seq;
 }
 
 int gvusb2_read_reg(struct gvusb2_dev *dev, u16 reg, u8 *value)
@@ -533,6 +542,7 @@ int gvusb2_i2c_unregister(struct gvusb2_vid *dev)
 {
 	(void)dev;
 	utkvid.i2c_unregister_calls++;
+	utkvid.i2c_unregister_seq = ++utkvid.utk_seq;
 	return 0;
 }
 

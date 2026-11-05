@@ -1069,16 +1069,19 @@ static void test_probe_wires_device(void)
 	interface_setup(&fi, 2, 2);
 	ep_set(&fi.ep[0][0].desc, 0x81, USB_ENDPOINT_XFER_ISOC, 0x1400);
 	ep_video(&fi.ep[1][1].desc);
+	/* the isochronous video setting is enumerated as alternate setting 5
+	 * (interface 0); probe must select the scanned setting, not hardcode it */
+	fi.alt[1].desc.bAlternateSetting = 5;
 
 	assert(gvusb2_vid_probe(&fi.intf, NULL) == 0);
 	assert(utkvid.set_interface_calls == 1);
+	assert(utkvid.set_interface_ifnum == 0);
 	assert(utkvid.set_interface_alt == 5);
 	assert(utkvid.urb_alloc_calls == GVUSB2_NUM_URBS);
 
 	dev = usb_get_intfdata(&fi.intf);
 	assert(dev != NULL);
 	assert(dev->intf == &fi.intf);
-	assert(dev->ep == &fi.ep[1][1].desc);
 	assert(dev->gv.udev == &utkvid.udev);
 	assert(dev->urbs[0] != NULL);
 	assert(dev->urbs[0]->dev == &utkvid.udev);
@@ -1172,6 +1175,10 @@ static void test_release_unregisters_then_frees(void)
 
 	gvusb2_release(&dev->v4l2_dev);
 
+	/* order: the v4l2 layer (its subdevs reference i2c clients that
+	 * i2c_del_adapter would free first) goes down before the adapter */
+	assert(utkvid.v4l2_device_unregister_seq < utkvid.i2c_unregister_seq);
+	assert(utkvid.ctrl_handler_free_seq < utkvid.i2c_unregister_seq);
 	assert(utkvid.i2c_unregister_calls == 1);
 	assert(utkvid.ctrl_handler_free_calls == 1);
 	assert(utkvid.v4l2_device_unregister_calls == 1);

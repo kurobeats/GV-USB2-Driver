@@ -39,6 +39,11 @@ struct utk_snd_state {
 	/* Transfer buffers: freed by kfree() in gvusb2_snd_free_isoc(). */
 	int kfree_calls;
 
+	/* usb_set_interface recording. */
+	unsigned int set_interface_calls;
+	unsigned int set_interface_ifnum;
+	unsigned int set_interface_alt;
+
 	/* DMA ring allocation. */
 	int vmalloc_calls;
 	int vfree_calls;
@@ -116,8 +121,9 @@ void usb_kill_urb(struct urb *urb)
 int usb_set_interface(struct usb_device *dev, int ifnum, int alternate)
 {
 	(void)dev;
-	(void)ifnum;
-	(void)alternate;
+	utk.set_interface_calls++;
+	utk.set_interface_ifnum = (unsigned int)ifnum;
+	utk.set_interface_alt = (unsigned int)alternate;
 	return 0;
 }
 

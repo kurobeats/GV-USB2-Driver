@@ -818,6 +818,11 @@ static int utk_probe(u8 endpoint_address, u8 attributes, u16 max_packet,
 	utk_probe_ep.desc.bmAttributes = attributes;
 	utk_probe_ep.desc.wMaxPacketSize = max_packet;
 
+	/* the real device enumerates the audio interface as interface 2,
+	 * alternate setting 1; probe must read these, not hardcode them */
+	utk_probe_alt.desc.bInterfaceNumber = 2;
+	utk_probe_alt.desc.bAlternateSetting = 1;
+
 	utk_probe_alt.desc.bNumEndpoints = 1;
 	utk_probe_alt.desc.bInterfaceClass = interface_class;
 	utk_probe_alt.endpoint = &utk_probe_ep;
@@ -868,6 +873,9 @@ static void test_probe_registers_card(void)
 
 	assert(utk.gvusb2_init_calls == 1);
 	assert(utk.reset_adc_calls == 1);	/* ADC reset before the card */
+	assert(utk.set_interface_calls == 1);
+	assert(utk.set_interface_ifnum == 2);
+	assert(utk.set_interface_alt == 1);
 	assert(utk.card_new_calls == 1);
 	assert(utk.card_register_calls == 1);
 	assert(utk.pcm_capture_count == 1);

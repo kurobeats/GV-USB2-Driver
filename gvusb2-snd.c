@@ -550,8 +550,11 @@ static int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_
 	if (ret < 0)
 		goto free_dev;
 
-	/* XXX: No hardcoding here. */
-	ret = usb_set_interface(udev, 2, 1);
+	/* select the audio interface; use the descriptors the endpoint scan
+	 * matched rather than hardcoded interface/alternate numbers */
+	ret = usb_set_interface(udev,
+		intf->altsetting[0].desc.bInterfaceNumber,
+		intf->altsetting[0].desc.bAlternateSetting);
 	if (ret < 0)
 		goto free_gvusb2;
 

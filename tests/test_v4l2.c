@@ -182,6 +182,12 @@ void mutex_unlock(struct mutex *m)
 	utk_mutex_unlocks++;
 }
 
+void mutex_lock(struct mutex *m)
+{
+	(void)m;
+	utk_mutex_locks++;
+}
+
 s32 i2c_smbus_read_byte_data(struct i2c_client *client, u8 command)
 {
 	(void)client;
@@ -370,6 +376,8 @@ void v4l2_device_unregister(struct v4l2_device *v4l2_dev)
 	(void)v4l2_dev;
 }
 
+static int utk_subdev_missing;
+
 struct v4l2_subdev *v4l2_i2c_new_subdev_board(struct v4l2_device *v4l2_dev,
 	struct i2c_adapter *adapter, struct i2c_board_info *info,
 	const unsigned short *probe_addrs)
@@ -377,6 +385,8 @@ struct v4l2_subdev *v4l2_i2c_new_subdev_board(struct v4l2_device *v4l2_dev,
 	(void)adapter;
 	(void)info;
 	(void)probe_addrs;
+	if (utk_subdev_missing)
+		return NULL;
 	utk_subdev.v4l2_dev = v4l2_dev;
 	return &utk_subdev;
 }
@@ -556,6 +566,7 @@ static void utk_reset(void)
 	utk_mutex_unlocks = 0;
 	utk_mutex_fail = 0;
 	utk_warn[0] = '\0';
+	utk_subdev_missing = 0;
 	memset(&utk_subdev, 0, sizeof(utk_subdev));
 
 	memset(&utk_d, 0, sizeof(utk_d));
@@ -1733,7 +1744,6 @@ static void test_stop_streaming(void)
 	utk_queue_buf(&b, dev);
 
 	gvusb2_vb2_stop_streaming(&dev->vb2q);
-
 	assert(utk_cancel_calls == 1);
 	assert(utk_mutex_locks == 1);
 	assert(utk_mutex_unlocks == 1);
@@ -1747,6 +1757,31 @@ static void test_stop_streaming(void)
 	assert(list_empty(&dev->buf_list));
 	/* No i2c traffic: stopping must not reprogram the decoder crop. */
 	assert(utk_count(EV_I2C_WRITE, UTK_ANY, UTK_ANY) == 0);
+}
+
+/* BUG: the stop path took the mutex with mutex_lock_interruptible() and
+ * bailed out on a signal, leaving URBs running into buffers vb2 is about to
+ * free. A stop must complete whether or not there is a signal pending: the
+ * lock is uninterruptible, so utk_mutex_fail must not change anything. */
+static void test_stop_streaming_uninterruptible(void)
+{
+	struct gvusb2_vb b;
+	struct gvusb2_vid *dev = utk_vid();
+	int done;
+
+	utk_reset();
+	dev = utk_vid();
+	utk_queue_buf(&b, dev);
+	utk_mutex_fail = 1;
+
+	gvusb2_vb2_stop_streaming(&dev->vb2q);
+
+	assert(utk_cancel_calls == 1);
+	assert(utk_mutex_locks == 1);
+	assert(utk_mutex_unlocks == 1);
+	done = utk_find(0, EV_VB2_DONE, UTK_ANY, UTK_ANY);
+	assert(done >= 0);
+	assert(utk_ev[done].a == VB2_BUF_STATE_ERROR);
 }
 
 /* An interrupted lock must not leave the queue half-started, and must not
@@ -1829,6 +1864,23 @@ static void test_v4l2_register(void)
 	assert(dev->sd_tw9910 == &utk_subdev);
 }
 
+/* BUG: a NULL TW9910 subdev was ignored, and STREAMON would have started the
+ * STK1150 while the decoder never got a s_stream: probe must fail instead. */
+static void test_v4l2_register_missing_decoder(void)
+{
+	struct gvusb2_vid *dev = utk_vid();
+
+	utk_reset();
+	dev = utk_vid();
+	utk_subdev_missing = 1;
+
+	assert(gvusb2_v4l2_register(dev) == -ENODEV);
+	/* the registration never completed, so the release callback must stay
+	 * the only teardown path: no v4l2_device_unregister happened here (it
+	 * would fire gvusb2_release mid-probe and free the device) */
+	assert(dev->sd_tw9910 == NULL);
+}
+
 /* video_register installs the queue, the lock and the NTSC default, and the
  * standard then decides the geometry. */
 static void test_video_register(void)
@@ -1903,10 +1955,12 @@ int main(void)
 	test_start_streaming();
 	test_start_streaming_failure();
 	test_stop_streaming();
+	test_stop_streaming_uninterruptible();
 	test_start_streaming_lock_failure();
 
 	test_vb2_setup();
 	test_v4l2_register();
+	test_v4l2_register_missing_decoder();
 	test_video_register();
 
 	printf("test_v4l2: all tests passed\n");
