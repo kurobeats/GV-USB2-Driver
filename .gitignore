@@ -55,3 +55,7 @@ dkms.conf
 .vscode/
 scratchpad/
 .pi/
+
+# compressed modules left by install.sh
+*.zst
+*.ko.zst

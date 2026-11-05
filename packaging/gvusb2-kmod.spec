@@ -13,7 +13,7 @@ Name:           %{prjname}-kmod
 Summary:        Kernel modules for the I-O DATA GV-USB2 USB capture device
 Version:        0.1.0
 Release:        1%{?dist}
-License:        GPL-2.0-only
+License:        GPL-2.0-only AND BSD-3-Clause
 URL:            https://github.com/kurobeats/GV-USB2-Driver
 Source0:        %{prjname}-%{version}.tar.gz
 
@@ -29,7 +29,7 @@ Video4Linux2 and ALSA kernel modules for the I-O DATA GV-USB2 USB 2.0 video
 capture device (USB 04bb:0532).
 
 The device is a TW9910 analog decoder behind a custom bridge. These modules
-provide raw YUY2 capture over V4L2 and 48 kHz S16_LE stereo capture over ALSA.
+provide raw UYVY capture over V4L2 and 48 kHz S16_LE stereo capture over ALSA.
 
 This package contains the kernel modules built against the running kernel by
 akmods, so they are rebuilt automatically after a kernel update.
