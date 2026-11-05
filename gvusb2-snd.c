@@ -46,6 +46,8 @@ MODULE_DEVICE_TABLE(usb, gvusb2_id_table);
 struct gvusb2_snd {
 	struct gvusb2_dev gv;
 	struct usb_interface *intf;
+	u8 iface_num;
+	u8 alt_setting;
 
 	/* urb */
 	struct urb *urbs[GVUSB2_NUM_URBS];
@@ -156,6 +158,18 @@ static int gvusb2_snd_capture_open(struct snd_pcm_substream *substream)
 	dev->substream = substream;
 	runtime->hw = gvusb2_snd_hw;
 	spin_unlock_irqrestore(&dev->lock, flags);
+
+	/* The device stops delivering isochronous data after a stream is killed:
+	 * every capture past the first one comes back with empty packets and
+	 * never advances hw_ptr (ALSA then aborts it: "capture read timeout").
+	 * Re-running the probe-time arming on each open makes the device start
+	 * from the same state; a driver rebind clears a wedged device the same
+	 * way. Failures are not fatal, the stream may still come up. */
+	if (usb_set_interface(dev->gv.udev, dev->iface_num, 0) < 0 ||
+	    usb_set_interface(dev->gv.udev, dev->iface_num,
+			      dev->alt_setting) < 0)
+		gvusb2_dbg(&dev->intf->dev, "re-arm: set_interface failed\n");
+	gvusb2_snd_reset_adc(&dev->gv);
 
 	ret = gvusb2_snd_submit_isoc(dev);
 	if (ret < 0) {
@@ -581,6 +595,8 @@ static int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_
 
 	/* initialize gvusb2_snd data */
 	dev->intf = intf;
+	dev->iface_num = iface_num;
+	dev->alt_setting = alt_setting;
 
 	/* initialize sound stuff */
 	ret = gvusb2_snd_alsa_init(dev);

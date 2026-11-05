@@ -11,6 +11,10 @@ DEST=/lib/modules/$KVER/kernel/drivers/media/usb/gvusb2
 [ -f "$SRC/gvusb2-video.ko" ] || { echo "no modules staged for $KVER"; exit 1; }
 sudo mkdir -p "$DEST"
 sudo install -m644 "$SRC"/gvusb2-*.ko "$DEST/"
+# Stale copies elsewhere (e.g. extra/) outrank DEST in depmod's search order
+# and silently keep an old build running after a deploy.
+find /lib/modules/$KVER -name 'gvusb2-*.ko*' \
+	! -path "$DEST/*" -exec sudo rm -f {} \; 2>/dev/null || true
 if [ "${FORCE:-0}" = "1" ] && lsmod | grep -q "^gvusb2"; then
 	# Fail loudly: a silent failure here leaves the OLD module running and
 	# every later test measures the previous build.

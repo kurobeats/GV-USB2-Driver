@@ -118,6 +118,42 @@ static void utk_expect_canary(const struct snd_pcm_runtime *runtime)
 /* The hw-constraint table only exists for downstream consumers once
  * capture_open() copies it into runtime->hw: this is the seam that makes the
  * 4096-byte floor (and the fixed rate/format) real. */
+/*****************************************************************************
+ * Re-arm at open
+ ****************************************************************************/
+
+/* The device stops delivering isoc data once a stream is killed, so each open
+ * has to redo the probe-time arming (SET_INTERFACE back to alt 0, then to the
+ * streaming alt, then the ADC reset) or every capture after the first comes up
+ * empty and ALSA aborts it with "capture read timeout". */
+static void test_open_rearms_device(void)
+{
+	struct gvusb2_snd *dev;
+	struct snd_pcm_substream sub;
+	struct snd_pcm_runtime *runtime;
+
+	utk_reset();
+	dev = utk_dev();
+	dev->iface_num = 2;
+	dev->alt_setting = 1;
+	runtime = utk_runtime(1024, 1024, 4096);
+
+	assert(utk.set_interface_calls == 0);
+	assert(utk.reset_adc_calls == 0);
+	assert(utk_capture_open(dev, &sub, runtime) == 0);
+
+	assert(utk.set_interface_calls == 2);
+	assert(utk.set_interface_ifnum == 2);
+	assert(utk.set_interface_alt == 1);	/* the streaming altsetting */
+	assert(utk.reset_adc_calls == 1);
+
+	/* and again on the next open, after a close */
+	assert(gvusb2_snd_capture_close(&sub) == 0);
+	assert(utk_capture_open(dev, &sub, runtime) == 0);
+	assert(utk.set_interface_calls == 4);
+	assert(utk.reset_adc_calls == 2);
+}
+
 static void test_open_installs_constraints(void)
 {
 	struct snd_pcm_hardware hw;
@@ -969,6 +1005,7 @@ static void test_probe_registers_card(void)
 
 int main(void)
 {
+	test_open_rearms_device();
 	test_open_installs_constraints();
 	test_period_constraint_arithmetic();
 
