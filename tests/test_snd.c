@@ -671,16 +671,19 @@ static void test_hw_params_allocates_and_frees(void)
 	assert(utk.last_vmalloc_size == 32768);
 	assert(runtime.dma_bytes == 32768);
 	assert(runtime.dma_area != NULL);
+	const void *first_ring = runtime.dma_area;
 
 	/* re-arming frees the previous ring instead of leaking it */
 	params.buffer_bytes = 16384;
 	assert(gvusb2_snd_hw_params(&sub, &params) == 0);
 	assert(utk.vfree_calls == 1);
+	assert(utk.last_vfree_ptr == first_ring);
 	assert(utk.last_vmalloc_size == 16384);
 	assert(runtime.dma_bytes == 16384);
 
 	assert(gvusb2_snd_hw_free(&sub) == 0);
 	assert(utk.vfree_calls == 2);
+	assert(utk.last_vfree_ptr != NULL);
 	assert(runtime.dma_bytes == 0);
 
 	/* hw_free is called unconditionally by ALSA; a second call must not

@@ -191,9 +191,10 @@ static int gvusb2_snd_hw_params(
 		/* NULL the ring before releasing it: a completion running between
 		 * vfree() and the new allocation taking effect must not see a
 		 * dangling pointer behind a non-zero dma_bytes. */
+		void *area = substream->runtime->dma_area;
 		substream->runtime->dma_bytes = 0;
 		substream->runtime->dma_area = NULL;
-		vfree(substream->runtime->dma_area);
+		vfree(area);
 	}
 
 	substream->runtime->dma_area = vmalloc(bytes);
@@ -208,9 +209,10 @@ static int gvusb2_snd_hw_params(
 static int gvusb2_snd_hw_free(struct snd_pcm_substream *substream)
 {
 	if (substream->runtime->dma_bytes > 0) {
+		void *area = substream->runtime->dma_area;
 		substream->runtime->dma_bytes = 0;
 		substream->runtime->dma_area = NULL;
-		vfree(substream->runtime->dma_area);
+		vfree(area);
 	}
 
 	return 0;

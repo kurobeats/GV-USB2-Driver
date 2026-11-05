@@ -53,6 +53,7 @@ struct utk_snd_state {
 	/* DMA ring allocation. */
 	int vmalloc_calls;
 	int vfree_calls;
+	const void *last_vfree_ptr;
 	unsigned long last_vmalloc_size;
 	int vmalloc_fail;
 
@@ -175,6 +176,7 @@ void *vmalloc(unsigned long size)
 void vfree(const void *addr)
 {
 	utk.vfree_calls++;
+	utk.last_vfree_ptr = addr;
 	free((void *)addr);
 }
 
