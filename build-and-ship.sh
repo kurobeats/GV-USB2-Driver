@@ -31,6 +31,10 @@ fi
 cd "$(dirname "$0")"
 make -C "$KDIR" M="$PWD" modules
 
+# Ship the installer too: the target's copy may be stale or missing.
+scp -q packaging/gvusb2-kmod-install.sh "$HOST:/tmp/gvusb2-kmod-install.sh"
+ssh "$HOST" "sudo install -m755 /tmp/gvusb2-kmod-install.sh /usr/local/sbin/gvusb2-kmod-install.sh"
+
 ssh "$HOST" "sudo mkdir -p /usr/local/lib/gvusb2/$KVER"
 scp -q gvusb2-video.ko gvusb2-sound.ko "$HOST:/tmp/"
 ssh "$HOST" "sudo install -m644 /tmp/gvusb2-video.ko /tmp/gvusb2-sound.ko /usr/local/lib/gvusb2/$KVER/ && sudo env FORCE=1 /usr/local/sbin/gvusb2-kmod-install.sh"
