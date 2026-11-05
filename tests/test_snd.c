@@ -489,8 +489,8 @@ static void test_isoc_packet_error_skipped(void)
 	utk_expect_zero(runtime->dma_area, 48, 24);
 }
 
-/* URB-level status decides whether the buffer is processed at all and whether
- * the urb goes back to the host controller. */
+/* Which URB-level statuses drop the buffer, and whether the urb goes back
+ * to the host controller. */
 static void test_isoc_urb_status_filtering(void)
 {
 	static const unsigned int lens[] = { 24 };
@@ -518,12 +518,20 @@ static void test_isoc_urb_status_filtering(void)
 		assert(utk.submit_calls == submits);	/* killed, not retried */
 	}
 
+	/* BUG: a transient HCD error (-EIO/-EPROTO/-ETIMEDOUT) was not retried,
+	 * which froze capture forever with no error surfaced to ALSA. The video
+	 * lane resubmits these; both lanes now agree. */
 	for (i = 0; i < sizeof(other_errors) / sizeof(other_errors[0]); i++) {
 		urb->status = other_errors[i];
 		utk_fill_packets(urb, 1, lens, NULL);
 		urb->complete(urb);
-		assert(dev->hw_ptr == 0);
-		assert(utk.submit_calls == submits);	/* an error is not retried */
+		assert(dev->hw_ptr == 0);	/* not processed */
+		assert(urb->iso_frame_desc[0].actual_length == 0);
+		assert(urb->iso_frame_desc[0].status == 0);
+		assert(utk.submit_calls == submits + 1);
+		assert(utk.last_submit_flags == GFP_ATOMIC);
+		assert(utk.last_submitted == urb);
+		submits = utk.submit_calls;
 	}
 
 	/* a good completion is processed, its descriptors cleared, and the urb
@@ -537,6 +545,69 @@ static void test_isoc_urb_status_filtering(void)
 	assert(utk.last_submitted == urb);
 	assert(urb->iso_frame_desc[0].actual_length == 0);
 	assert(urb->iso_frame_desc[0].status == 0);
+}
+
+/* One completion can deliver many laps of a small buffer (256 packets of
+ * 256 bytes = 16384 frames against a 1024-frame minimum buffer): the pointer
+ * must land at n % buffer_size, not stop somewhere beyond it after a single
+ * subtraction. */
+static void test_pointer_multi_lap(void)
+{
+	static unsigned int lens[64];
+	struct gvusb2_snd *dev;
+	struct snd_pcm_substream sub;
+	struct snd_pcm_runtime *runtime;
+	int i;
+
+	utk_reset();
+	dev = utk_dev();
+	runtime = utk_runtime(1024, 1024, 4096);
+	assert(utk_capture_open(dev, &sub, runtime) == 0);
+
+	/* 63 packets of 256 B (64 frames) + 1 packet of 252 B (63 frames) =
+	 * 4095 frames: almost four laps of the 1024-frame buffer */
+	for (i = 0; i < 63; i++)
+		lens[i] = 256;
+	lens[63] = 252;
+	utk_fill_packets(dev->urbs[0], 64, lens, NULL);
+	dev->urbs[0]->complete(dev->urbs[0]);
+
+	assert(dev->hw_ptr == 4095 % 1024);
+	assert(gvusb2_snd_pcm_pointer(&sub) == 4095 % 1024);
+	assert(gvusb2_snd_pcm_pointer(&sub) < runtime->buffer_size);
+}
+
+/* URBs stream from probe->open until hw_params arms the DMA ring: a completion
+ * arriving in that window must be dropped whole (accounting untouched, ring
+ * untouched), not memcpy'd to dma_area == NULL, and the urb must still be
+ * resubmitted so the stream is not lost. */
+static void test_completion_before_hw_params_dropped(void)
+{
+	static const unsigned int lens[] = { 24 };
+	struct gvusb2_snd *dev;
+	struct snd_pcm_substream sub;
+	struct snd_pcm_runtime *runtime;
+	struct urb *urb;
+
+	utk_reset();
+	dev = utk_dev();
+	runtime = utk_runtime(1024, 512, 0);	/* ring not armed: dma_bytes 0 */
+	memset(&sub, 0, sizeof(sub));
+	sub.runtime = runtime;
+	dev->substream = &sub;
+
+	urb = dev->urbs[0];
+	utk_fill_packets(urb, 1, lens, NULL);
+	urb->complete(urb);
+
+	assert(dev->hw_ptr == 0);
+	assert(dev->dma_offset == 0);
+	assert(dev->avail == 0);
+	/* resubmission still happens, so the stream is not lost */
+	assert(utk.submit_calls == 1);
+	assert(utk.last_submit_flags == GFP_ATOMIC);
+
+	dev->substream = NULL;
 }
 
 /*****************************************************************************
@@ -632,20 +703,28 @@ static void test_hw_params_allocation_failure(void)
 	sub.runtime = &runtime;
 	params.buffer_bytes = 32768;
 
+	/* a failed allocation leaves no stale pointer for the isoc completion
+	 * path (it may arrive between the failed hw_params and the next one) */
+	utk_reset();
+	memset(&runtime, 0, sizeof(runtime));
+	memset(&sub, 0, sizeof(sub));
+	sub.runtime = &runtime;
 	utk.vmalloc_fail = 1;
 	assert(gvusb2_snd_hw_params(&sub, &params) == -ENOMEM);
 	assert(runtime.dma_bytes == 0);
+	assert(runtime.dma_area == NULL);
 	assert(gvusb2_snd_hw_free(&sub) == 0);
 	assert(utk.vfree_calls == 0);
 
-	/* and a successful allocation followed by a failed one releases the
-	 * first ring exactly once */
+	/* and a successful allocation followed by a failed re-arm releases the
+	 * first ring exactly once and leaves no dangling pointer */
 	utk.vmalloc_fail = 0;
 	assert(gvusb2_snd_hw_params(&sub, &params) == 0);
 	utk.vmalloc_fail = 1;
 	assert(gvusb2_snd_hw_params(&sub, &params) == -ENOMEM);
 	assert(utk.vfree_calls == 1);
 	assert(runtime.dma_bytes == 0);
+	assert(runtime.dma_area == NULL);
 	assert(gvusb2_snd_hw_free(&sub) == 0);
 	assert(utk.vfree_calls == 1);
 }
@@ -786,7 +865,6 @@ static void test_probe_registers_card(void)
 	dev = usb_get_intfdata(&utk_probe_intf);
 	assert(dev != NULL);
 	assert(dev->intf == &utk_probe_intf);
-	assert(dev->ep == &utk_probe_ep.desc);
 
 	assert(utk.gvusb2_init_calls == 1);
 	assert(utk.reset_adc_calls == 1);	/* ADC reset before the card */
@@ -828,6 +906,8 @@ int main(void)
 	test_period_boundary_and_pointer_wrap();
 	test_isoc_packet_error_skipped();
 	test_isoc_urb_status_filtering();
+	test_pointer_multi_lap();
+	test_completion_before_hw_params_dropped();
 
 	test_trigger_start_stop();
 

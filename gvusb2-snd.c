@@ -26,7 +26,7 @@ MODULE_DESCRIPTION("gvusb2 sound driver");
 MODULE_AUTHOR("Isaac Lozano <109lozanoi@gmail.com>");
 MODULE_LICENSE("Dual BSD/GPL");
 
-static int snd_index;
+static int snd_index = 7;
 static char *id;
 static bool enable;
 
@@ -46,7 +46,6 @@ MODULE_DEVICE_TABLE(usb, gvusb2_id_table);
 struct gvusb2_snd {
 	struct gvusb2_dev gv;
 	struct usb_interface *intf;
-	struct usb_endpoint_descriptor *ep;
 
 	/* urb */
 	struct urb *urbs[GVUSB2_NUM_URBS];
@@ -96,6 +95,12 @@ static void gvusb2_snd_process_pcm(
 	struct snd_pcm_runtime *runtime = dev->substream->runtime;
 	int frames;
 
+	/* URBs stream from open to close while the DMA ring only exists between
+	 * hw_params and hw_free: drop packets until the runtime has a ring to
+	 * copy into (copying to dma_area == NULL is a NULL deref). */
+	if (runtime->dma_bytes == 0)
+		return;
+
 	/* hw_ptr advances in frames, dma_offset in bytes: an endpoint length
 	 * that is not frame-aligned would desync them permanently. */
 	len = gvusb2_packet_bytes(len);
@@ -103,8 +108,9 @@ static void gvusb2_snd_process_pcm(
 
 	spin_lock_irqsave(&dev->lock, flags);
 	dev->hw_ptr += frames;
+	/* one completion can deliver many laps of a small buffer */
 	if (dev->hw_ptr >= runtime->buffer_size)
-		dev->hw_ptr -= runtime->buffer_size;
+		dev->hw_ptr %= runtime->buffer_size;
 
 	dev->avail += frames;
 	spin_unlock_irqrestore(&dev->lock, flags);
@@ -181,10 +187,15 @@ static int gvusb2_snd_hw_params(
 	unsigned int bytes;
 
 	bytes = params_buffer_bytes(hw_params);
-	if (substream->runtime->dma_bytes > 0)
+	if (substream->runtime->dma_bytes > 0) {
+		/* NULL the ring before releasing it: a completion running between
+		 * vfree() and the new allocation taking effect must not see a
+		 * dangling pointer behind a non-zero dma_bytes. */
+		substream->runtime->dma_bytes = 0;
+		substream->runtime->dma_area = NULL;
 		vfree(substream->runtime->dma_area);
+	}
 
-	substream->runtime->dma_bytes = 0;
 	substream->runtime->dma_area = vmalloc(bytes);
 	if (substream->runtime->dma_area == NULL)
 		return -ENOMEM;
@@ -196,10 +207,11 @@ static int gvusb2_snd_hw_params(
 
 static int gvusb2_snd_hw_free(struct snd_pcm_substream *substream)
 {
-	if (substream->runtime->dma_bytes > 0)
+	if (substream->runtime->dma_bytes > 0) {
+		substream->runtime->dma_bytes = 0;
+		substream->runtime->dma_area = NULL;
 		vfree(substream->runtime->dma_area);
-
-	substream->runtime->dma_bytes = 0;
+	}
 
 	return 0;
 }
@@ -214,14 +226,20 @@ static int gvusb2_snd_pcm_prepare(struct snd_pcm_substream *substream)
 static int gvusb2_snd_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 {
 	struct gvusb2_snd *dev = snd_pcm_substream_chip(substream);
+	unsigned long flags;
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 		return 0;
 	case SNDRV_PCM_TRIGGER_STOP:
+		/* completions keep running until close kills the URBs, so the reset
+		 * must not tear: the same fields are written under this lock in the
+		 * isoc completion path. No period_elapsed under the lock. */
+		spin_lock_irqsave(&dev->lock, flags);
 		dev->dma_offset = 0;
 		dev->hw_ptr = 0;
 		dev->avail = 0;
+		spin_unlock_irqrestore(&dev->lock, flags);
 		return 0;
 	default:
 		return -EINVAL;
@@ -383,18 +401,21 @@ static void gvusb2_snd_isoc_irq(struct urb *urb)
 
 	switch (urb->status) {
 	case 0:
+		gvusb2_snd_process_isoc(dev, urb);
 		break;
 	case -ECONNRESET:
 	case -ENOENT:
 	case -ESHUTDOWN:
 		return;
 	default:
+		/* A transient HCD error (-EIO/-EPROTO/-EXDEV) is not the end of the
+		 * stream: like the video lane, resubmit instead of freezing capture
+		 * until close/reopen, and skip processing the packets the HCD could
+		 * not transfer. */
 		gvusb2_dbg(&dev->intf->dev, "urb error! status %d\n",
 			urb->status);
-		return;
+		break;
 	}
-
-	gvusb2_snd_process_isoc(dev, urb);
 
 	/* a completion can still arrive after ->close killed the URBs; do not
 	 * resurrect one for a stream that no longer exists */
@@ -540,7 +561,6 @@ static int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_
 		goto free_gvusb2;
 
 	/* initialize gvusb2_snd data */
-	dev->ep = audio_ep;
 	dev->intf = intf;
 
 	/* initialize sound stuff */
