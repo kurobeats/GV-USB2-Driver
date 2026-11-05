@@ -20,7 +20,7 @@ host-side test suite.
 | Audio | 48 kHz, 16-bit stereo, capture only |
 | Inputs | Composite (RCA) and S-Video (mini-DIN), switchable at runtime |
 | Controls | Brightness, contrast, saturation, hue, sharpness, gain, AGC, crop offsets, VBI |
-| Hotplug | Safe to unplug while streaming |
+| Hotplug | Safe to unplug while streaming, video or audio |
 
 ---
 
@@ -28,8 +28,17 @@ host-side test suite.
 
 - Linux with kernel headers matching the **running** kernel
 - A C compiler and `make`
+- The `tw9910` decoder module (`CONFIG_VIDEO_TW9910`). It is normally built by
+  distribution kernels and loaded automatically; without it the video module
+  refuses to bind rather than expose a capture node that can never start
+  (the decoder would stay unprogrammed and every frame would be black)
 - Optional but handy: `v4l2-utils` (for `v4l2-ctl`), `alsa-utils` (for
   `arecord`), `ffmpeg`
+
+If **Secure Boot** is enabled the unsigned modules are rejected at load time
+with `Key was rejected by service`. Either sign them with a MOK key you enrol
+(`mokutil --import`), or use the akmod package in `packaging/`, or turn Secure
+Boot off. Check with `mokutil --sb-state`.
 
 ## Installation
 
@@ -48,15 +57,37 @@ already taken, load it with another one:
 sudo modprobe gvusb2-sound index=9
 ```
 
+If the modules are already loaded, `install.sh` unloads them first and stops
+with an error when something still holds the device — close OBS/`arecord`
+first. On a desktop the audio server usually holds the ALSA card even when
+nothing is playing:
+
+```sh
+sudo systemctl stop alsa-state
+systemctl --user stop pipewire pipewire-pulse wireplumber
+# ... install/reload, then start them again
+```
+
+An RPM/akmod spec that rebuilds the modules after each kernel update lives in
+`packaging/gvusb2-kmod.spec`.
+
 ### Building for a different kernel
 
 If you build on one machine and run on another, use the shipped helper:
 
 ```sh
-./build-and-ship.sh <kernel-version> <ssh-host>   # e.g. 6.11.4-301.fc41.x86_64 tetsuo
+./build-and-ship.sh --fetch 6.11.4-301.fc41.x86_64   # once, to extract headers
+./build-and-ship.sh 6.11.4-301.fc41.x86_64 tetsuo    # build + install over ssh
 ```
 
-It builds against the target kernel's own headers and installs on the far end.
+Headers are taken from an extracted `kernel-devel` RPM, so nothing is
+installed on either machine. On the far end the modules are staged in
+`/usr/local/lib/gvusb2/<kernel>/` and loaded through
+`/usr/local/sbin/gvusb2-kmod-install.sh`, which is itself shipped from
+`packaging/` on every run. `FORCE=1` (the default here) reloads an already
+loaded module and fails loudly if it is in use rather than leaving the old
+build running.
+
 Use this rather than copying a module built against your local `/usr/src`:
 distribution kernel headers ship a **rewritten config** (Fedora's literally
 says *"We are resetting this value to facilitate local builds"*), and a module
@@ -205,6 +236,10 @@ USB 2.0 isochronous endpoint:
   interlaced frame and hands it to videobuf2.
 - If packets go missing the counter jumps, the driver restarts the field rather
   than writing misaligned data — that is the `counter desync` line in `dmesg`.
+- Bus-level errors are not fatal: when the host controller reports a failed
+  transfer (`-EIO`/`-EPROTO`) the driver discards that batch and resubmits the
+  URBs, so a one-off glitch costs a field or an audio packet instead of
+  freezing the stream until you stop and restart capture.
 - The TW9910 is configured over the bridge's I2C engine: video standard,
   cropping/active windows, black level and the analog input mux all live there.
 - Audio is a second isochronous stream feeding ALSA at a fixed 48 kHz.
@@ -228,16 +263,31 @@ tests/hw-test.sh          # on-device matrix, run on the capture machine
 ```
 
 The host suite covers the pure logic (frame assembly, TW9910 register plans,
-ALSA period arithmetic) and compiles the real core/I2C code against fake kernel
-headers with a mock register engine. The hardware suite checks all four
-geometry modes, frame integrity, frame rate, kernel-log health, warmed-up
-steady state and the audio path. Both are expected to be green before any
-change is merged.
+ALSA period arithmetic) and compiles the real driver sources against fake
+kernel headers, one lane per area: core/I2C register protocol with a mock
+register engine, the video path (URB lifecycle, field assembly, vb2 buffers,
+probe/disconnect unwind), the V4L2 control/ioctl surface, and the audio path
+(isoc completion, ring arithmetic, ALSA open/close/disconnect). The hardware
+suite checks all four geometry modes, frame integrity, frame rate, kernel-log
+health, warmed-up steady state and the audio path; it needs the capture device
+to itself, so close OBS before running it. Both are expected to be green
+before any change is merged.
 
 ## Troubleshooting
 
 **`Device or resource busy`** — something already holds the device (OBS, a
 browser tab, a stray `arecord`). Close it. `fuser -v /dev/video0` shows who.
+
+**`modprobe -r` says the module is in use** — the video/audio node is still
+open. Besides OBS and `arecord`, `pipewire`/`wireplumber` keep the ALSA card
+open and `alsa-state` holds the control device; stop them as shown under
+*Installation* and reload.
+
+**`insmod: Key was rejected by service`** — Secure Boot, see *Requirements*.
+
+**The video node never appears** (`dmesg | grep gvusb2` shows the probe was
+tried) — check that the `tw9910` module is available on this kernel; the
+driver fails the probe deliberately when the decoder cannot be registered.
 
 **Dropped frames / audio skips** — almost always USB bandwidth or host load.
 Try another port, remove other USB devices, close background applications. The

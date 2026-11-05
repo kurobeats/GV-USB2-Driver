@@ -1,7 +1,18 @@
 #!/bin/bash
-# Hardware test of the gvusb2 driver on tetsuo: all standards/VBI modes,
-# frame integrity, rate stability, dmesg health, plus an OBS round-trip.
-DEV=/dev/video1
+# Hardware test of the gvusb2 driver: all standards/VBI modes, frame
+# integrity, rate stability, dmesg health, plus an OBS round-trip.
+#   tests/hw-test.sh [device]      (default: the gvusb2 node v4l2-ctl reports)
+DEV=${1:-${DEV:-}}
+if [ -z "$DEV" ]; then
+	DEV=$(v4l2-ctl --list-devices 2>/dev/null |
+		awk '/gvusb2/{getline; print $1; exit}')
+fi
+[ -n "$DEV" ] && [ -c "$DEV" ] || {
+	echo "no gvusb2 capture node found; pass one explicitly:" >&2
+	echo "  $0 /dev/videoN   (v4l2-ctl --list-devices lists them)" >&2
+	exit 1
+}
+echo "device: $DEV"
 fail=0
 ok()   { printf '  PASS  %s\n' "$1"; }
 bad()  { printf '  FAIL  %s\n' "$1"; fail=1; }
