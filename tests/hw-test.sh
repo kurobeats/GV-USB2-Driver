@@ -66,7 +66,7 @@ for std in ntsc pal; do
   echo "        rate ${fps} fps"
   # frames must not be identical: a frozen buffer would repeat hashes
   timeout 20 ffmpeg -hide_banner -loglevel error -f v4l2 -i $DEV -t 3 -vf scale=32:24 -f framehash - 2>/dev/null \
-    | python3 /tmp/rundist.py
+    | python3 "$(dirname "$0")/rundist.py"
 done
 
 echo "== dmesg health after video tests"
