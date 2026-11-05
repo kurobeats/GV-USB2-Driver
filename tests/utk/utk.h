@@ -28,6 +28,7 @@ typedef struct { int unused; } spinlock_t;
 struct device { void *parent; };
 
 #define pr_err(fmt, ...) fprintf(stderr, "gvusb2: " fmt, ##__VA_ARGS__)
+#define dev_err(dev, fmt, ...) fprintf(stderr, "gvusb2: " fmt, ##__VA_ARGS__)
 #define dev_dbg(dev, fmt, ...) ((void)(dev))
 #define dev_info(dev, fmt, ...) ((void)(dev))
 

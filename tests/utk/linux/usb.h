@@ -4,7 +4,7 @@
 
 #include "../utk.h"
 
-struct usb_device { int unused; };
+struct usb_device { struct device dev; };
 struct usb_interface { struct device dev; };
 struct usb_device_id { int unused; };
 

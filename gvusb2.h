@@ -15,6 +15,7 @@
 
 #include <linux/module.h>
 
+#define GVUSB2_CTRL_TIMEOUT_MS 1000
 #define GVUSB2_NUM_URBS 4
 #define GVUSB2_NUM_ISOCH_PACKETS 0x100
 #define GVUSB2_MAX_AUDIO_PACKET_SIZE 0x100

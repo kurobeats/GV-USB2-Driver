@@ -168,6 +168,39 @@ static void test_read_write_roundtrip(void)
 	assert(v == 0x5a);
 }
 
+/* BUG: gvusb2_snd_reset_adc ignored every register-op error (TODO: return
+ * errors), so probe's ret < 0 check was dead code and a dead bus still
+ * "successfully" brought up the ADC. */
+static void test_reset_adc_error(void)
+{
+	struct gvusb2_dev dev;
+	int ret;
+
+	utk_reset();
+	dev.udev = NULL;
+
+	utk_fail_usb_write = 1;
+	ret = gvusb2_snd_reset_adc(&dev);
+	assert(ret < 0);
+
+	utk_reset();
+	dev.udev = NULL;
+	utk_fail_usb_read = 1;
+	ret = gvusb2_snd_reset_adc(&dev);
+	assert(ret < 0);
+
+	/* success path: GPIO + AC97/I2S registers all written, first op's
+	 * mask/value visible in the mock register file */
+	utk_reset();
+	dev.udev = NULL;
+	ret = gvusb2_snd_reset_adc(&dev);
+	assert(ret == 0);
+	assert(utk_regs[0x0002] == 0x30);
+	assert(utk_regs[0x0000] == 0x10);
+	assert(utk_regs[0x0500] == 0x00);
+	assert(utk_regs[0x050c] == 0x01);
+}
+
 /* gvusb2_set_reg_mask must read-modify-write only the masked bits. */
 static void test_set_reg_mask_rmw(void)
 {
@@ -422,6 +455,7 @@ int main(void)
 	test_i2c_xfer_unsupported();
 	test_i2c_register_config();
 	test_i2c_register_write_failure();
+	test_reset_adc_error();
 
 	printf("test_core: all tests passed\n");
 	return 0;
