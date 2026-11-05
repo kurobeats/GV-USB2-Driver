@@ -30,6 +30,12 @@ struct utk_snd_state {
 	int card_new_calls;
 	int card_free_calls;
 	int card_register_calls;
+	int card_deferred;      /* snd_card_free_when_closed with an open card */
+	int card_in_use;        /* fake an open PCM fd on the card */
+	struct snd_card *last_card;     /* card from the last card_new/defer */
+	/* LOWLEVEL device registered via snd_device_new: its dev_free is the
+	 * designated free point for the driver data. */
+	int dev_free_calls;
 	int pcm_new_calls;
 	int pcm_playback_count;
 	int pcm_capture_count;
@@ -209,17 +215,41 @@ int snd_card_new(struct device *parent, int idx, const char *xid,
 	return 0;
 }
 
+static const struct snd_device_ops *utk_dev_ops;
+static void *utk_dev_data;
+static struct snd_device utk_dev_free_device;
+
+static int utk_run_dev_free(void)
+{
+	const struct snd_device_ops *ops = utk_dev_ops;
+
+	if (ops == NULL)
+		return 0;
+	utk_dev_free_device.device_data = utk_dev_data;
+	utk_dev_ops = NULL;
+	utk_dev_data = NULL;
+	utk.dev_free_calls++;
+	return ops->dev_free(&utk_dev_free_device);
+}
+
 int snd_card_free(struct snd_card *card)
 {
 	utk.card_free_calls++;
+	utk_run_dev_free();
 	free(card);
 	return 0;
 }
 
-/* The kernel defers until the last file is closed; the fake releases at once
- * because no test keeps a card file open. */
+/* The kernel defers until the last file is closed. The fake defers only
+ * while utk.card_in_use (a stand-in for an open PCM fd); the test then
+ * simulates the close by calling snd_card_free() itself. */
 int snd_card_free_when_closed(struct snd_card *card)
 {
+	if (utk.card_in_use) {
+		utk.card_deferred++;
+		utk.last_card = card;
+		return 0;
+	}
 	return snd_card_free(card);
 }
 
@@ -235,8 +265,8 @@ int snd_device_new(struct snd_card *card, int type, void *device_data,
 {
 	(void)card;
 	(void)type;
-	(void)device_data;
-	(void)ops;
+	utk_dev_ops = ops;
+	utk_dev_data = device_data;
 	return 0;
 }
 

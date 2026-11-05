@@ -266,8 +266,13 @@ static struct page *gvusb2_snd_pcm_page(
 
 static int gvusb2_snd_dev_free(struct snd_device *device)
 {
-	/* deallocate all sound card device stuff */
-	/* TODO: do we need this? */
+	struct gvusb2_snd *dev = device->device_data;
+
+	/* The card releases its devices at real card destruction (userspace
+	 * may still hold the PCM open): this is the one safe point to free the
+	 * driver data the PCM ops reference. */
+	gvusb2_free(&dev->gv);
+	kfree(dev);
 
 	return 0;
 }
@@ -303,15 +308,19 @@ static int gvusb2_snd_alsa_init(struct gvusb2_snd *dev)
 	ret = snd_device_new(dev->card, SNDRV_DEV_LOWLEVEL, dev,
 		&gvusb2_snd_device_ops);
 	if (ret < 0) {
+		/* dev_free was never registered, so dev is still probe's to
+		 * kfree on unwind */
 		snd_card_free(dev->card);
+		dev->card = NULL;
 		return ret;
 	}
 
+	/* from here the card owns dev: its dev_free callback does the
+	 * gvusb2_free and kfree at card destruction */
+
 	ret = snd_pcm_new(dev->card, "analog in", 0, 0, 1, &dev->pcm);
-	if (ret < 0) {
-		snd_card_free(dev->card);
+	if (ret < 0)
 		return ret;
-	}
 
 	dev->pcm->private_data = dev;
 
@@ -324,16 +333,19 @@ static int gvusb2_snd_alsa_init(struct gvusb2_snd *dev)
 
 	/* register the card */
 	ret = snd_card_register(dev->card);
-	if (ret < 0) {
-		snd_card_free(dev->card);
+	if (ret < 0)
 		return ret;
-	}
 
 	return 0;
 }
 
 static void gvusb2_snd_alsa_free(struct gvusb2_snd *dev)
 {
+	if (dev->card == NULL)
+		return;
+	/* When a stream is open the free is deferred to the last close; the
+	 * LOWLEVEL dev_free callback then frees the driver data the ops
+	 * reference. */
 	snd_card_free_when_closed(dev->card);
 	dev->card = NULL;
 }
@@ -569,7 +581,7 @@ static int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_
 	/* initialize sound stuff */
 	ret = gvusb2_snd_alsa_init(dev);
 	if (ret < 0)
-		goto free_gvusb2;
+		goto free_alsa;
 
 	/* allocate URBs */
 	ret = gvusb2_snd_allocate_urbs(dev);
@@ -582,7 +594,13 @@ static int gvusb2_snd_probe(struct usb_interface *intf, const struct usb_device_
 	return 0;
 
 free_alsa:
-	gvusb2_snd_alsa_free(dev);
+	/* release the sound card; once its LOWLEVEL device is registered, the
+	 * card's dev_free consumed dev (gvusb2_free + kfree), so nothing may
+	 * touch dev afterwards. If no card exists, dev is still ours. */
+	if (dev->card != NULL) {
+		gvusb2_snd_alsa_free(dev);
+		return ret;
+	}
 
 free_gvusb2:
 	gvusb2_free(&dev->gv);
@@ -606,14 +624,10 @@ static void gvusb2_snd_disconnect(struct usb_interface *intf)
 	gvusb2_snd_cancel_isoc(dev);
 	gvusb2_snd_free_isoc(dev);
 
-	/* free the sound card */
+	/* release the sound card; the driver data itself is freed by the
+	 * card's dev_free callback at real card destruction -- userspace may
+	 * still hold this PCM open across the unplug */
 	gvusb2_snd_alsa_free(dev);
-
-	/* free the internal gvusb2 device */
-	gvusb2_free(&dev->gv);
-
-	/* free me */
-	kfree(dev);
 }
 
 static struct usb_driver gvusb2_snd_usb_driver = {

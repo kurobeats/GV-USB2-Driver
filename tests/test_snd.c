@@ -856,6 +856,72 @@ static void test_probe_endpoint_filter(void)
 	assert(utk.card_new_calls == 0);
 }
 
+/* BUG: disconnect kfree()d the driver data while an open card still hands
+ * that pointer back to ops ->close/->pointer/->trigger (UAF on unplug while
+ * recording). The data must be released by the card's dev_free callback at
+ * real card destruction. */
+static void test_disconnect_dev_outlives_open_card(void)
+{
+	struct gvusb2_snd *dev;
+	int kfree_calls_before;
+
+	utk_reset();
+	utk.card_in_use = 1;
+	dev = utk_dev();
+	usb_set_intfdata(&utk_io_intf, dev);
+
+	gvusb2_snd_disconnect(&utk_io_intf);
+
+	assert(usb_get_intfdata(&utk_io_intf) == NULL);
+	assert(utk.kill_calls == GVUSB2_NUM_URBS);
+	assert(utk.urb_free_calls == GVUSB2_NUM_URBS);
+	assert(utk.kfree_calls == GVUSB2_NUM_URBS);	/* transfer buffers */
+	/* the card outlives the driver data because a user holds the fd */
+	assert(utk.card_deferred == 1);
+	assert(utk.card_free_calls == 0);
+	assert(utk.dev_free_calls == 0);
+
+	/* userspace closes the capture fd: the card is released and only then
+	 * frees the driver data it owns */
+	kfree_calls_before = utk.kfree_calls;
+	assert(snd_card_free(utk.last_card) == 0);
+	assert(utk.card_free_calls == 1);
+	assert(utk.dev_free_calls == 1);
+	assert(utk.kfree_calls == kfree_calls_before + 1);	/* dev itself */
+}
+
+/* With no open stream, disconnect releases the card synchronously, which
+ * runs dev_free and frees the driver data in the same call. */
+static void test_disconnect_frees_idle_card(void)
+{
+	struct gvusb2_snd *dev;
+
+	utk_reset();
+	dev = utk_dev();
+	usb_set_intfdata(&utk_io_intf, dev);
+
+	gvusb2_snd_disconnect(&utk_io_intf);
+
+	assert(utk.card_deferred == 0);
+	assert(utk.card_free_calls == 1);
+	assert(utk.dev_free_calls == 1);
+}
+
+/* A probe failure after a successful alsa_init releases the card once, and
+ * the card's dev_free consumes the driver data exactly once (double-free
+ * would crash the kernel instead of failing the probe). */
+static void test_probe_unwind_card_owned_dev(void)
+{
+	int ret;
+
+	utk_reset();
+	utk.urb_alloc_fail_at = 1;
+	ret = utk_probe(0x84, USB_ENDPOINT_XFER_ISOC, 0x100, 0);
+	assert(ret == -ENOMEM);
+	assert(utk.card_free_calls == 1);
+	assert(utk.dev_free_calls == 1);
+}
+
 /* The happy path wires card, PCM, ops and URBs in the order the rest of the
  * driver depends on. */
 static void test_probe_registers_card(void)
@@ -926,6 +992,9 @@ int main(void)
 	test_allocate_urbs_failure();
 	test_probe_endpoint_filter();
 	test_probe_registers_card();
+	test_disconnect_dev_outlives_open_card();
+	test_disconnect_frees_idle_card();
+	test_probe_unwind_card_owned_dev();
 
 	printf("test_snd: all tests passed\n");
 	return 0;
