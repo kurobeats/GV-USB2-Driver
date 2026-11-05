@@ -306,7 +306,7 @@ and rebind; if a stream misbehaves, stop and restart it, or reload:
 ```sh
 sudo modprobe -r gvusb2-video gvusb2-sound
 sudo modprobe gvusb2-video
-sudo modprobe gvusb2-sound index=7
+sudo modprobe gvusb2-sound          # add index=N if 7 is taken
 ```
 
 ## Limitations
